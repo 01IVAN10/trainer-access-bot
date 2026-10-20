@@ -1,0 +1,18 @@
+# Секрети — ніколи не в Git
+.env
+
+# Віртуальне середовище
+.venv/
+
+# Python-сміття
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Локальна база даних
+storage/
+*.db
+*.db-journal
+
+# macOS
+.DS_Store

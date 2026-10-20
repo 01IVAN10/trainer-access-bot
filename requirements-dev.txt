@@ -1,0 +1,4 @@
+# Інструменти лише для розробки. На сервер (Railway) не потрапляють:
+# він ставить тільки requirements.txt.
+-r requirements.txt
+pytest>=8

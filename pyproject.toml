@@ -1,0 +1,4 @@
+# Налаштування pytest. Запуск тестів:  pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]   # щоб тести бачили пакет bot без встановлення

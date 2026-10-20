@@ -15,3 +15,13 @@ python -m tools.find_chats  # дізнатися CHANNEL_ID і ADMIN_CHAT_ID
 python -m tools.check_setup # перевірити все
 python -m bot.main
 ```
+
+## Тести
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Логіка підписки (продовження, нагадування, пільговий період, видалення) і зарахування оплат
+перевіряються без Telegram: час передається параметром, тож «місяць» проганяється за мілісекунди.

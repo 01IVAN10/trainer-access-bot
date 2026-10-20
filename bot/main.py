@@ -2,8 +2,8 @@
 Точка входу. Запуск:  python -m bot.main
 
 Порядок, як в етапі 1: логи → конфіг → бот → перевірки (fail fast) → polling.
-Зараз (крок 0) бот лише запускається, перевіряє налаштування і відповідає на /start.
-Тарифи, оплата і доступ з'являться на кроках 1–6.
+Крок 1: при старті завантажуються тарифи (data/plans.yaml) і база даних.
+Меню, оплата і доступ з'являться на кроках 2–6.
 """
 import asyncio
 import logging
@@ -15,8 +15,10 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
+from bot import db
 from bot.checks import check_admin_chat, check_channel, check_mono
 from bot.config import load_config
+from bot.plans import load_plans
 
 
 async def run_checks(bot: Bot, config) -> None:
@@ -41,6 +43,13 @@ async def main() -> None:
         stream=sys.stdout,  # stdout: Railway фарбує stderr у червоне
     )
     config = load_config()
+    # Тарифи — до всього іншого: помилка в YAML має зупинити запуск одразу (fail fast).
+    try:
+        plans = load_plans()
+    except ValueError as e:
+        sys.exit(f"❌ {e}")
+    logging.info("Тарифи: %s", ", ".join(f"{p.id} ({p.price_uah} грн)" for p in plans.values()))
+
     bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
@@ -51,6 +60,7 @@ async def main() -> None:
 
     try:
         await run_checks(bot, config)
+        await db.init(config.db_path)
         # ВІДМІННІСТЬ від етапу 1: там ми викидали події, що прийшли, поки бот був вимкнений
         # (щоб AI не відповідав на старе пачкою). Тут так не можна: серед них можуть бути
         # заявки на вступ від людей, які ВЖЕ заплатили. Тому drop_pending_updates=False.
@@ -58,6 +68,7 @@ async def main() -> None:
         logging.info("Бот запущено")
         await dp.start_polling(bot)
     finally:
+        await db.close()
         await bot.session.close()
 
 

@@ -18,13 +18,13 @@ from bot.config import load_config
 
 
 def _report(title: str, problems: list[str], ok_text: str = "") -> bool:
-    if problems:
-        print(f"❌ {title}")
-        for p in problems:
-            print(f"     • {p}")
-        return False
-    print(f"✅ {title}{(' — ' + ok_text) if ok_text else ''}")
-    return True
+    """Друкує результат. Повертає False лише для справжніх помилок; «⚠️» — попередження."""
+    errors = [p for p in problems if not p.startswith("⚠️")]
+    icon = "❌" if errors else ("⚠️ " if problems else "✅")
+    print(f"{icon} {title}{(' — ' + ok_text) if ok_text and not errors else ''}")
+    for p in problems:
+        print(f"     • {p}")
+    return not errors
 
 
 async def main() -> None:

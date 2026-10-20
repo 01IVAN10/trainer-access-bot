@@ -19,12 +19,13 @@ import os
 import sys
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramConflictError
+from aiogram.exceptions import TelegramAPIError, TelegramConflictError, TelegramMigrateToChat
 from dotenv import load_dotenv
 
 load_dotenv()
 
-KIND = {"channel": "📢 канал", "supergroup": "👥 група", "group": "👥 група", "private": "👤 особистий"}
+KIND = {"channel": "📢 канал", "supergroup": "👥 супергрупа", "group": "👥 група (звич.)",
+        "private": "👤 особистий"}
 
 
 async def main() -> None:
@@ -61,9 +62,11 @@ async def main() -> None:
             # Поточний статус (подія могла бути старою: бота додали, а потім прибрали)
             try:
                 status = (await bot.get_chat_member(chat_id, me.id)).status
+            except TelegramMigrateToChat as e:
+                status = f"група стала супергрупою → новий ID {e.migrate_to_chat_id}"
             except TelegramAPIError:
                 status = "немає доступу"
-            print(f"{KIND.get(kind, kind):12} {chat_id:<16} «{title}»  — бот: {status}")
+            print(f"{KIND.get(kind, kind):18} {chat_id:<16} «{title}»  — бот: {status}")
 
         print("\nКуди що вставити в .env:\n"
               "  📢 канал → CHANNEL_ID\n"

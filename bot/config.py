@@ -37,11 +37,14 @@ def _require(name: str) -> str:
     return value
 
 
-def _require_chat_id(name: str) -> int:
-    """ID групи чи каналу: обов'язковий, ціле число, починається з -100.
+def _require_chat_id(name: str, channel: bool) -> int:
+    """ID каналу чи групи: обов'язковий, ціле ВІД'ЄМНЕ число.
 
-    -100… — так Telegram позначає супергрупи й канали. Якщо ID без -100,
-    найімовірніше, скопійовано не те (наприклад, ID користувача).
+    Як Telegram нумерує чати:
+      користувач        → додатне число         (123456789)
+      звичайна група    → від'ємне              (-4512345678)
+      супергрупа, канал → від'ємне з -100…      (-1001234567890)
+    Канал ЗАВЖДИ має -100…, тому для CHANNEL_ID перевіряємо суворіше.
     Помилку краще побачити тут, при старті, а не на першій оплаті.
     """
     raw = _require(name)
@@ -49,8 +52,11 @@ def _require_chat_id(name: str) -> int:
         value = int(raw)
     except ValueError:
         sys.exit(f"❌ {name} має бути цілим числом, а зараз: {raw!r}")
-    if not raw.startswith("-100"):
-        sys.exit(f"❌ {name}={raw}: ID каналу чи групи має починатися з -100. "
+    if value > 0:
+        sys.exit(f"❌ {name}={raw}: додатне число — це ID користувача, а не чату. "
+                 "Дізнатися правильний: python -m tools.find_chats")
+    if channel and not raw.startswith("-100"):
+        sys.exit(f"❌ {name}={raw}: ID каналу завжди починається з -100. "
                  "Дізнатися правильний: python -m tools.find_chats")
     return value
 
@@ -58,8 +64,8 @@ def _require_chat_id(name: str) -> int:
 def load_config() -> Config:
     cfg = Config(
         bot_token=_require("BOT_TOKEN"),
-        channel_id=_require_chat_id("CHANNEL_ID"),
-        admin_chat_id=_require_chat_id("ADMIN_CHAT_ID"),
+        channel_id=_require_chat_id("CHANNEL_ID", channel=True),
+        admin_chat_id=_require_chat_id("ADMIN_CHAT_ID", channel=False),
         mono_token=_require("MONO_TOKEN"),
         db_path=os.getenv("DB_PATH", "storage/bot.db"),
     )

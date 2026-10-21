@@ -2,3 +2,4 @@
 # він ставить тільки requirements.txt.
 -r requirements.txt
 pytest>=8
+watchfiles>=1.0         # автоперезапуск бота при збереженні коду (лише локально)

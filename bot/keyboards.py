@@ -57,3 +57,31 @@ def choose_plan_keyboard(text: str = "💳 Обрати тариф") -> InlineKe
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=text, callback_data=PlanCb(action="list").pack())],
     ])
+
+
+class PayCb(CallbackData, prefix="pay"):
+    """Кнопка «Я оплатив — перевірити». У ній лише НАШ номер платежу.
+
+    Номер можна підробити (вписати чужий) — тому хендлер перевіряє, що платіж
+    належить саме тому, хто натиснув.
+    """
+    action: str        # check
+    payment_id: int
+
+
+def invoice_keyboard(page_url: str, amount_uah: int, payment_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        # url-кнопка: Telegram сам відкриє сторінку оплати, бот про натискання не дізнається
+        [InlineKeyboardButton(text=f"💳 Оплатити {amount_uah} грн", url=page_url)],
+        [InlineKeyboardButton(text="✅ Я оплатив — перевірити",
+                              callback_data=PayCb(action="check", payment_id=payment_id).pack())],
+        [InlineKeyboardButton(text="⬅️ Усі тарифи", callback_data=PlanCb(action="list").pack())],
+    ])
+
+
+def retry_keyboard(plan_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Спробувати ще раз",
+                              callback_data=PlanCb(action="buy", plan_id=plan_id).pack())],
+        [InlineKeyboardButton(text="⬅️ Усі тарифи", callback_data=PlanCb(action="list").pack())],
+    ])

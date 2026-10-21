@@ -23,11 +23,19 @@
 Це знайшов тест test_concurrent_apply_extends_only_once. Правило: КОЖЕН запис у базу —
 лише під замком. Читання — без замка.
 
+МІГРАЦІЇ. «CREATE TABLE IF NOT EXISTS» створює таблицю, лише якщо її НЕМАЄ. Якщо таблиця
+вже є (у тебе на Mac, а згодом — на Railway з живими підписниками), нову колонку він
+не додасть. Видаляти базу не можна — там оплати й підписки. Тому зміни схеми — це
+пронумерований список кроків MIGRATIONS. База пам'ятає, скільки кроків уже застосовано
+(PRAGMA user_version), і при старті доганяє решту. Правило: старі міграції НЕ змінюємо,
+лише дописуємо нові в кінець.
+
 Перевірка:  python -m bot.db   (створить storage/bot.db і покаже таблиці)
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -74,6 +82,17 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS idx_subscriptions_expires ON subscriptions(expires_at);
 """
 
+MIGRATIONS = [
+    # 1 (крок 1): початкові таблиці. IF NOT EXISTS — бо бази, створені на кроці 1, вже їх мають.
+    SCHEMA,
+    # 2 (крок 3): посилання на сторінку оплати і до коли рахунок дійсний —
+    # щоб на повторне «Оплатити» показати той самий рахунок, а не плодити нові.
+    """
+    ALTER TABLE payments ADD COLUMN page_url TEXT;
+    ALTER TABLE payments ADD COLUMN valid_until TEXT;
+    """,
+]
+
 
 def _iso(dt: datetime) -> str:
     if dt.tzinfo is None:
@@ -97,9 +116,25 @@ async def init(path: str) -> None:
     _db = await aiosqlite.connect(path)
     _db.row_factory = aiosqlite.Row
     await _db.execute("PRAGMA foreign_keys = ON")
-    await _db.executescript(SCHEMA)
-    await _db.commit()
+    await _migrate()
     log.info("База даних: %s", path)
+
+
+async def _migrate() -> None:
+    async with _db.execute("PRAGMA user_version") as cur:
+        version = (await cur.fetchone())[0]
+    if version > len(MIGRATIONS):
+        # База новіша за код (наприклад, відкотили код на стару версію) — не чіпаємо її.
+        sys.exit(f"❌ База даних версії {version}, а код знає лише {len(MIGRATIONS)} міграцій. "
+                 "Оновіть код, а не базу.")
+    for number, sql in enumerate(MIGRATIONS, start=1):
+        if number <= version:
+            continue
+        await _db.executescript(sql)
+        # PRAGMA не приймає «?»-параметри; number — наше ціле число, не дані від людини.
+        await _db.execute(f"PRAGMA user_version = {number}")
+        await _db.commit()
+        log.info("Базу оновлено: міграція %s", number)
 
 
 async def close() -> None:
@@ -141,10 +176,49 @@ async def create_payment(user_id: int, plan: Plan, now: datetime) -> int:
     return cur.lastrowid
 
 
-async def set_payment_status(payment_id: int, status: str) -> None:
+async def set_payment_status(payment_id: int, status: str) -> bool:
+    """Оновлює статус, але лише ВПЕРЕД: success / failure / expired — остаточні.
+
+    Навіщо: на кроці 4 webhook-и mono можуть прийти не по порядку («processing» після
+    «success»). Без цієї умови успішний платіж «повернувся» б у processing.
+    Повертає True, якщо статус змінено.
+    """
     async with _write_lock:
-        await _db.execute("UPDATE payments SET status = ? WHERE id = ?", (status, payment_id))
+        cur = await _db.execute(
+            "UPDATE payments SET status = ? "
+            "WHERE id = ? AND status NOT IN ('success', 'failure', 'expired')",
+            (status, payment_id),
+        )
         await _db.commit()
+    return cur.rowcount == 1
+
+
+async def set_invoice(payment_id: int, invoice_id: str, page_url: str, valid_until: datetime) -> None:
+    """Прив'язує до нашого платежу рахунок у банку."""
+    async with _write_lock:
+        await _db.execute(
+            "UPDATE payments SET invoice_id = ?, page_url = ?, valid_until = ? WHERE id = ?",
+            (invoice_id, page_url, _iso(valid_until), payment_id),
+        )
+        await _db.commit()
+
+
+async def find_open_payment(user_id: int, plan_id: str, now: datetime,
+                            margin: timedelta = timedelta(minutes=2)) -> dict | None:
+    """Неоплачений рахунок на цей самий тариф, який ще діє (із запасом `margin`).
+
+    Людина натиснула «Оплатити», передумала, натиснула знову — показуємо ТОЙ САМИЙ рахунок.
+    Запас: рахунок, що згорить за хвилину, не віддаємо — людина не встигне ввести картку.
+    """
+    async with _db.execute(
+        """SELECT * FROM payments
+           WHERE user_id = ? AND plan_id = ? AND status IN ('created', 'processing')
+             AND invoice_id IS NOT NULL AND valid_until > ?
+           ORDER BY id DESC LIMIT 1""",
+        (user_id, plan_id, _iso(now + margin)),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
 
 
 async def get_payment(payment_id: int) -> dict | None:
@@ -235,6 +309,8 @@ if __name__ == "__main__":
         await init("storage/bot.db")
         async with _db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") as cur:
             print("Таблиці:", ", ".join(r["name"] for r in await cur.fetchall()))
+        async with _db.execute("PRAGMA user_version") as cur:
+            print("Версія схеми (міграцій застосовано):", (await cur.fetchone())[0])
         await close()
 
     asyncio.run(_show())

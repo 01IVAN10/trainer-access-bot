@@ -119,3 +119,68 @@ def test_naive_datetime_is_rejected():
         with pytest.raises(ValueError, match="часовим поясом"):
             await db.create_payment(1, PLANS["month"], datetime(2026, 10, 20, 12, 0))
     run(t)
+
+
+# ---------- крок 3: міграції, статуси, відкриті рахунки ----------
+
+def test_migration_upgrades_old_database(tmp_path):
+    """База з кроку 1 (без нових колонок) після старту нового коду отримує колонки
+    і НЕ втрачає даних. Саме так оновиться база на Railway з живими підписниками."""
+    import sqlite3
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(db.SCHEMA)  # як створив код кроку 1: user_version = 0
+    old.execute("INSERT INTO users (user_id, full_name) VALUES (1, 'Олена')")
+    old.execute("INSERT INTO payments (user_id, plan_id, amount_kop, created_at) VALUES (1, 'month', 49000, 'x')")
+    old.commit()
+    old.close()
+
+    async def t():
+        await db.init(str(path))
+        try:
+            async with db._db.execute("PRAGMA user_version") as cur:
+                version = (await cur.fetchone())[0]
+            p = await db.get_payment(1)
+            return version, p
+        finally:
+            await db.close()
+    version, payment = asyncio.run(t())
+    assert version == len(db.MIGRATIONS)
+    assert payment["amount_kop"] == 49000 and "page_url" in payment and "valid_until" in payment
+
+
+def test_migrations_run_once(tmp_path):
+    """Другий запуск не намагається вдруге додати колонки (інакше — «duplicate column»)."""
+    path = str(tmp_path / "bot.db")
+
+    async def start_stop():
+        await db.init(path)
+        await db.close()
+    asyncio.run(start_stop())
+    asyncio.run(start_stop())  # не падає
+
+
+def test_final_status_never_changes():
+    """Webhook-и можуть прийти не по порядку: «processing» після «success» не має нічого зламати."""
+    async def t():
+        pid = await db.create_payment(1, PLANS["month"], NOW)
+        assert await db.set_payment_status(pid, "processing")
+        assert await db.set_payment_status(pid, "success")
+        assert not await db.set_payment_status(pid, "processing")
+        assert not await db.set_payment_status(pid, "failure")
+        assert (await db.get_payment(pid))["status"] == "success"
+    run(t)
+
+
+def test_find_open_payment():
+    async def t():
+        pid = await db.create_payment(1, PLANS["month"], NOW)
+        # без рахунку в банку — не «відкритий»
+        assert await db.find_open_payment(1, "month", NOW) is None
+        await db.set_invoice(pid, "inv1", "https://pay", NOW + timedelta(minutes=30))
+        assert (await db.find_open_payment(1, "month", NOW))["id"] == pid
+        assert await db.find_open_payment(1, "quarter", NOW) is None             # інший тариф
+        assert await db.find_open_payment(1, "month", NOW + timedelta(minutes=29)) is None  # згорить за хвилину
+        await db.set_payment_status(pid, "failure")
+        assert await db.find_open_payment(1, "month", NOW) is None               # остаточний статус
+    run(t)

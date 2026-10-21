@@ -2,7 +2,7 @@
 Точка входу. Запуск:  python -m bot.main
 
 Порядок: логи → конфіг → тарифи → бот → перевірки (fail fast) → БД → polling.
-Крок 2: меню, тарифи, «Моя підписка». Оплата і доступ з'являться на кроках 3–6.
+Крок 3: оплата через mono (рахунок + «Перевірити»). Webhook і доступ — кроки 4–5.
 """
 import asyncio
 import logging
@@ -17,6 +17,7 @@ from bot import db
 from bot.app import build_dispatcher
 from bot.checks import check_admin_chat, check_channel, check_mono
 from bot.config import load_config
+from bot.payments.mono import MonoProvider
 from bot.plans import load_plans
 
 # Меню команд (кнопка «Меню» біля поля вводу). /paysupport — обов'язкова для бота з оплатами.
@@ -58,7 +59,8 @@ async def main() -> None:
     logging.info("Тарифи: %s", ", ".join(f"{p.id} ({p.price_uah} грн)" for p in plans.values()))
 
     bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = build_dispatcher(config, plans)  # роутери, фільтри, middleware — див. bot/app.py
+    provider = MonoProvider(config.mono_token)
+    dp = build_dispatcher(config, plans, provider)  # роутери, фільтри, middleware — див. bot/app.py
 
     try:
         await run_checks(bot, config)
@@ -72,6 +74,7 @@ async def main() -> None:
         logging.info("Бот запущено")
         await dp.start_polling(bot)
     finally:
+        await provider.close()
         await db.close()
         await bot.session.close()
 

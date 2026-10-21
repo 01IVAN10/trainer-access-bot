@@ -13,23 +13,18 @@
 Використовують і main.py (fail fast), і tools/check_setup.py (звіт людині).
 """
 import logging
-import ssl
 
 import aiohttp
-import certifi
 from aiogram import Bot
 from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramMigrateToChat
 
+from bot.payments.mono import MONO_API, SSL_CONTEXT
+
 log = logging.getLogger(__name__)
 
-MONO_API = "https://api.monobank.ua"
 
-# Набір довірених сертифікатів з пакета certifi, а не системний.
-# Чому: Python з python.org на macOS НЕ бачить сертифікати системи → будь-який HTTPS-запит
-# падає з CertificateError. aiogram робить так само всередині — тому Telegram працював,
-# а наш окремий запит до mono — ні. На Railway (Linux) теж працює однаково.
-SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+# Сертифікати з certifi — див. пояснення в bot/payments/mono.py (одне місце на весь бот).
 
 
 def _rights_link(bot_username: str) -> str:

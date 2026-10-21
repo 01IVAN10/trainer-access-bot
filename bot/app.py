@@ -8,19 +8,23 @@
 from aiogram import Dispatcher, F
 
 from bot.config import Config
-from bot.handlers import my, plans as plans_handlers, start
+from bot.handlers import my, pay, plans as plans_handlers, start
 from bot.middlewares import AntiFloodMiddleware, UserTrackingMiddleware
+from bot.payments import PaymentProvider
 from bot.plans import Plan
 
 
-def build_dispatcher(config: Config, plans: dict[str, Plan], flood_limit: int = 5) -> Dispatcher:
+def build_dispatcher(config: Config, plans: dict[str, Plan], provider: PaymentProvider,
+                     flood_limit: int = 5) -> Dispatcher:
+    """Викликати ОДИН раз на процес: роутери — одиночки, другий диспетчер їх не отримає."""
     # Спільні дані для всіх хендлерів: aiogram передасть їх у функцію за назвою параметра
-    # (config: Config, plans: dict). Замість глобальних змінних і load_config() у кожному модулі.
-    dp = Dispatcher(config=config, plans=plans)
+    # (config: Config, plans: dict, provider: PaymentProvider). Замість глобальних змінних.
+    # provider — mono в main.py, фальшивий банк у тестах.
+    dp = Dispatcher(config=config, plans=plans, provider=provider)
 
     # Клієнтські роутери — ЛИШЕ для особистих чатів (як у барбершопі): інакше бот
     # відповідав би меню на кожне повідомлення в адмін-групі.
-    client_routers = (start.router, plans_handlers.router, my.router, start.fallback_router)
+    client_routers = (start.router, plans_handlers.router, pay.router, my.router, start.fallback_router)
     for r in client_routers:
         r.message.filter(F.chat.type == "private")
 

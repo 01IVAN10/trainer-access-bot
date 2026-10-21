@@ -6,21 +6,21 @@ import asyncio
 from datetime import timedelta
 
 from bot import db
-from bot.app import build_dispatcher
 from bot.keyboards import BTN_HELP, BTN_MY, BTN_PLANS, PlanCb
 from bot.plans import load_plans
 from bot.subscription import Subscription, utcnow
+from tests.fake_payments import FakeProvider
 from tests.fake_telegram import (
+    get_dispatcher,
     ADMIN_GROUP, USER, buttons, callback_update, make_bot, make_config, text_update,
 )
 
 PLANS = load_plans()
-# Диспетчер збираємо ОДИН раз — тією ж функцією, що й main.py.
-# Конфіг (демо-режим тощо) передаємо в кожен виклик окремо.
-DP = build_dispatcher(make_config(), PLANS, flood_limit=1000)
+DP = get_dispatcher()  # спільний для всіх тестів (див. tests/fake_telegram.py)
 
 
-def scenario(steps, demo_mode=True, subscription: Subscription | None = None):
+def scenario(steps, demo_mode=True, subscription: Subscription | None = None,
+             provider: FakeProvider | None = None):
     """Свіжа БД → (за потреби) готова підписка → події по черзі → що надіслав бот."""
     async def run():
         await db.init(":memory:")
@@ -35,7 +35,8 @@ def scenario(steps, demo_mode=True, subscription: Subscription | None = None):
                      int(subscription.removed), utcnow().isoformat()))
                 await db._db.commit()
             for update in steps:
-                await DP.feed_update(bot, update, config=make_config(demo_mode), plans=PLANS)
+                await DP.feed_update(bot, update, config=make_config(demo_mode), plans=PLANS,
+                                     provider=provider or FakeProvider())
             return session
         finally:
             await db.close()
@@ -60,7 +61,8 @@ def test_user_is_saved_to_db():
         await db.init(":memory:")
         bot, _ = make_bot()
         try:
-            await DP.feed_update(bot, text_update("/start"), config=make_config(), plans=PLANS)
+            await DP.feed_update(bot, text_update("/start"), config=make_config(), plans=PLANS,
+                                 provider=FakeProvider())
             async with db._db.execute("SELECT full_name FROM users WHERE user_id = ?", (USER.id,)) as cur:
                 return (await cur.fetchone())["full_name"]
         finally:
@@ -112,11 +114,6 @@ def test_demo_blocked_for_paid_subscriber():
     assert len(s.answers()[0].text) <= 200  # ліміт Telegram на текст спливаючого вікна
 
 
-def test_buy_paid_plan_reaches_payment_stub():
-    s = scenario([callback_update(PlanCb(action="buy", plan_id="month").pack())])
-    assert "наступному кроці" in s.answers()[0].text
-
-
 def test_my_subscription_none():
     s = scenario([text_update(BTN_MY)])
     assert "немає підписки" in s.sent()[0].text
@@ -155,7 +152,7 @@ def test_button_press_alone_saves_user():
         bot, _ = make_bot()
         try:
             await DP.feed_update(bot, callback_update(PlanCb(action="view", plan_id="month").pack()),
-                                 config=make_config(), plans=PLANS)
+                                 config=make_config(), plans=PLANS, provider=FakeProvider())
             async with db._db.execute("SELECT COUNT(*) FROM users WHERE user_id = ?", (USER.id,)) as cur:
                 return (await cur.fetchone())[0]
         finally:

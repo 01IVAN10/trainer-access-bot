@@ -128,3 +128,37 @@ def subscription_text(sub: Subscription | None, plan: Plan | None, now: datetime
                 "Продовжіть, щоб не втратити його.")
     return (f"⛔️ <b>Підписка закінчилась</b> {until}\n\n"
             "Доступ до каналу закрито. Оформіть тариф — і він відкриється знову.")
+
+
+# ---------- оплата (крок 3) ----------
+
+def invoice_text(plan: Plan, amount_kop: int, valid_until: datetime, tz: str, demo_mode: bool) -> str:
+    lines = [
+        f"🧾 <b>Рахунок: {escape(plan.title)}</b> — {amount_kop // 100} грн",
+        "",
+        "1. Натисніть <b>«💳 Оплатити»</b> — відкриється захищена сторінка monobank.",
+        "2. Після оплати поверніться сюди і натисніть <b>«✅ Я оплатив — перевірити»</b>.",
+        "",
+        f"Рахунок дійсний до {format_date(valid_until, tz)}.",
+    ]
+    if demo_mode:
+        lines += ["", "<i>🧪 Тестова оплата — гроші не списуються. Картка: "
+                      "<code>4242 4242 4242 4242</code>, будь-який термін дії і CVV.</i>"]
+    return "\n".join(lines)
+
+
+def payment_success_text(plan: Plan | None, sub: Subscription, tz: str) -> str:
+    title = escape(plan.title) if plan else sub.plan_id
+    return (f"✅ <b>Оплату отримано!</b>\n\n"
+            f"Тариф: {title}\n"
+            f"Доступ діє до: <b>{format_date(sub.expires_at, tz)}</b>{_tz_note(tz)}\n\n"
+            "<i>🛠 Посилання на канал бот видаватиме з наступного кроку розробки.</i>")
+
+
+PAYMENT_PENDING = ("⏳ Оплату ще не отримано.\n\n"
+                   "Якщо ви вже оплатили — зачекайте хвилину і натисніть «Перевірити» ще раз.")
+PAYMENT_FAILED = ("❌ <b>Оплата не пройшла.</b>\n\n"
+                  "Гроші не списано. Спробуйте ще раз або іншою карткою. Якщо не виходить — /paysupport")
+PAYMENT_EXPIRED = "⌛ <b>Час на оплату цього рахунку минув.</b>\n\nСтворіть новий — це займе секунду."
+PAYMENT_PROVIDER_DOWN = ("😕 Не вдалося зв'язатися з банком. Спробуйте за хвилину.\n"
+                         "Якщо повторюється — /paysupport")

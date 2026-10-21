@@ -66,6 +66,17 @@ def test_create_invoice_request_and_response():
     assert sent["body"]["amount"] == 49000 and sent["body"]["ccy"] == 980
     assert sent["body"]["merchantPaymInfo"] == {"reference": "payment-7", "destination": "Сила вдома — 1 місяць"}
     assert sent["body"]["redirectUrl"] == "https://t.me/test_bot" and sent["body"]["validity"] == 1800
+    assert "webHookUrl" not in sent["body"]  # не передали адресу — не надсилаємо поле
+
+
+def test_create_invoice_with_webhook_url():
+    app, seen = serve()
+
+    async def create(p):
+        return await p.create_invoice(amount_kop=100, reference="r", description="d", redirect_url=None,
+                                      validity_seconds=60, webhook_url="https://bot.example.com/webhooks/mono")
+    run(app, create)
+    assert seen[0]["body"]["webHookUrl"] == "https://bot.example.com/webhooks/mono"
 
 
 @pytest.mark.parametrize("mono_status, ours", [

@@ -1,5 +1,6 @@
 aiogram>=3.20,<4        # фреймворк для Telegram-бота (aiohttp для запитів до mono — вже всередині)
 python-dotenv>=1.0      # читає .env у змінні оточення
+cryptography>=42        # перевірка підпису webhook від mono (ECDSA)
 certifi                 # сертифікати для HTTPS-запитів до mono (є в aiogram, але ми імпортуємо напряму)
 pyyaml>=6.0             # тарифи в YAML (крок 1)
 aiosqlite>=0.20         # асинхронна SQLite (крок 1)

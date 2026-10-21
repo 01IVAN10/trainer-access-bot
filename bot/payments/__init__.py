@@ -30,13 +30,33 @@ class PaymentError(Exception):
     """Банк недоступний або відповів помилкою. Текст — для логів, не для клієнта."""
 
 
+class WebhookRejected(Exception):
+    """Webhook НЕ прийнято: підпис не збігся або тіло зіпсоване. Тобто це, можливо, не банк."""
+
+
+@dataclass(frozen=True)
+class WebhookEvent:
+    """Що повідомив банк, уже ПІСЛЯ перевірки підпису."""
+    invoice_id: str
+    status: str | None      # наш статус; None — невідомий нам (напр. reversed — повернення коштів)
+    raw_status: str         # як назвав банк — для логів
+    amount_kop: int | None  # сума з повідомлення — звіряємо з нашою
+
+
 class PaymentProvider(Protocol):
     async def create_invoice(self, *, amount_kop: int, reference: str, description: str,
-                             redirect_url: str | None, validity_seconds: int) -> Invoice: ...
+                             redirect_url: str | None, validity_seconds: int,
+                             webhook_url: str | None = None) -> Invoice: ...
 
     async def get_status(self, invoice_id: str) -> str: ...
+
+    async def parse_webhook(self, body: bytes, headers) -> WebhookEvent:
+        """Перевіряє, що webhook справді від банку, і розбирає його.
+        Не від банку / зіпсований → WebhookRejected. Банк недоступний (ключ) → PaymentError."""
+        ...
 
     async def close(self) -> None: ...
 
 
-__all__ = ["FINAL_STATUSES", "STATUSES", "Invoice", "PaymentError", "PaymentProvider"]
+__all__ = ["FINAL_STATUSES", "STATUSES", "Invoice", "PaymentError", "PaymentProvider",
+           "WebhookEvent", "WebhookRejected"]

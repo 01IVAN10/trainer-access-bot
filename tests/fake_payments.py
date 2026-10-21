@@ -4,7 +4,7 @@
 """
 from itertools import count
 
-from bot.payments import Invoice, PaymentError
+from bot.payments import Invoice, PaymentError, WebhookRejected
 
 
 class FakeProvider:
@@ -32,6 +32,11 @@ class FakeProvider:
     def pay(self, invoice_id: str = "inv1", status: str = "success") -> None:
         """«Людина оплатила» (або картку відхилено / рахунок згорів)."""
         self.statuses[invoice_id] = status
+
+    async def parse_webhook(self, body: bytes, headers):
+        # Фальшивий банк не підписує webhook-и — будь-який вважаємо підробленим.
+        # (Справжню перевірку підпису тестує tests/test_webhook.py з MonoProvider.)
+        raise WebhookRejected("fake: підпис не перевіряється")
 
     async def close(self) -> None:
         pass

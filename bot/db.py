@@ -203,6 +203,27 @@ async def set_invoice(payment_id: int, invoice_id: str, page_url: str, valid_unt
         await _db.commit()
 
 
+async def get_payment_by_invoice(invoice_id: str) -> dict | None:
+    async with _db.execute("SELECT * FROM payments WHERE invoice_id = ?", (invoice_id,)) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def pending_payments(now: datetime, max_age: timedelta = timedelta(days=1),
+                           limit: int = 50) -> list[dict]:
+    """Незавершені платежі з рахунком у банку за останню добу — для фонової звірки.
+
+    Старші за добу не чіпаємо: рахунок живе 30 хв, а давні «created» — це покинуті спроби.
+    """
+    async with _db.execute(
+        """SELECT * FROM payments
+           WHERE status IN ('created', 'processing') AND invoice_id IS NOT NULL AND created_at >= ?
+           ORDER BY id LIMIT ?""",
+        (_iso(now - max_age), limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
 async def find_open_payment(user_id: int, plan_id: str, now: datetime,
                             margin: timedelta = timedelta(minutes=2)) -> dict | None:
     """Неоплачений рахунок на цей самий тариф, який ще діє (із запасом `margin`).

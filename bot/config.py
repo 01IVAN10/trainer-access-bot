@@ -31,6 +31,14 @@ class Config:
     demo_mode: bool        # демо для портфоліо: показувати демо-тариф і позначки «тестова оплата»
     timezone: str          # у якому часовому поясі показувати дати людям
     db_path: str
+    # Публічна адреса бота (https://…) — куди mono надсилатиме webhook. Порожньо → без webhook:
+    # оплату підтверджують кнопка «Перевірити» і фонова звірка (так зручно локально на Mac).
+    webhook_base_url: str = ""
+    port: int = 8080       # на якому порту слухає HTTP-сервер бота (Railway задає PORT сам)
+
+    @property
+    def webhook_url(self) -> str | None:
+        return f"{self.webhook_base_url}/webhooks/mono" if self.webhook_base_url else None
 
 
 def _require(name: str) -> str:
@@ -78,6 +86,15 @@ def _bool(name: str, default: bool = False) -> bool:
     sys.exit(f"❌ {name}={raw!r}: очікую 1 або 0")
 
 
+def _optional_port() -> int:
+    raw = os.getenv("PORT", "").strip()
+    if not raw:
+        return 8080
+    if not raw.isdigit() or not 0 < int(raw) < 65536:
+        sys.exit(f"❌ PORT={raw!r}: очікую номер порту (наприклад, 8080)")
+    return int(raw)
+
+
 def load_config() -> Config:
     cfg = Config(
         bot_token=_require("BOT_TOKEN"),
@@ -88,7 +105,12 @@ def load_config() -> Config:
         demo_mode=_bool("DEMO_MODE"),
         timezone=os.getenv("TIMEZONE", "Europe/Kyiv").strip(),
         db_path=os.getenv("DB_PATH", "storage/bot.db"),
+        webhook_base_url=os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/"),
+        port=_optional_port(),
     )
+    # mono відправляє webhook лише на https; http-адреса — майже напевно помилка копіювання.
+    if cfg.webhook_base_url and not cfg.webhook_base_url.startswith("https://"):
+        sys.exit(f"❌ WEBHOOK_BASE_URL має починатися з https://, а зараз: {cfg.webhook_base_url!r}")
     try:
         ZoneInfo(cfg.timezone)
     except (ZoneInfoNotFoundError, ValueError):
@@ -112,3 +134,5 @@ if __name__ == "__main__":
     print(f"   DEMO_MODE:     {'так' if cfg.demo_mode else 'ні'}")
     print(f"   TIMEZONE:      {cfg.timezone}")
     print(f"   DB_PATH:       {cfg.db_path}")
+    print(f"   WEBHOOK:       {cfg.webhook_url or 'вимкнено (кнопка + фонова звірка)'}")
+    print(f"   PORT:          {cfg.port}")

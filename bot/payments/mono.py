@@ -8,14 +8,26 @@ monobank acquiring (plata by mono). Документація: https://api.monoba
 кодом, просто гроші не списуються. Тому код однаковий для демо і для реального клієнта.
 
 Суми — у КОПІЙКАХ (490 грн = 49000), валюта 980 = гривня (ISO 4217).
+
+WEBHOOK (крок 4). mono сам надсилає POST на наш webHookUrl при кожній зміні статусу
+(крім expired), до 3 спроб, порядок НЕ гарантований. До кожного — заголовок X-Sign:
+підпис тіла запиту закритим ключем mono (ECDSA + SHA-256). Відкритий ключ беремо в mono
+(GET /api/merchant/pubkey). Підробити підпис без закритого ключа неможливо — тому
+«оплачено» на нашу адресу може надіслати хто завгодно, але ПРИЙМЕМО лише від mono.
 """
+import base64
+import json
 import logging
 import ssl
+import time
 
 import aiohttp
 import certifi
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
-from bot.payments import Invoice, PaymentError
+from bot.payments import Invoice, PaymentError, WebhookEvent, WebhookRejected
 
 log = logging.getLogger(__name__)
 
@@ -37,12 +49,18 @@ _STATUS_MAP = {
 }
 
 
+# Не перезапитувати ключ частіше, ніж раз на 10 хв (див. verify_signature).
+PUBKEY_REFRESH_INTERVAL = 600
+
+
 class MonoProvider:
     def __init__(self, token: str, base_url: str = MONO_API, timeout: float = 15) -> None:
         self._token = token
         self._base_url = base_url.rstrip("/")
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._session: aiohttp.ClientSession | None = None
+        self._pubkey: ec.EllipticCurvePublicKey | None = None
+        self._pubkey_fetched_at = float("-inf")
 
     def _get_session(self) -> aiohttp.ClientSession:
         # Одна сесія на весь бот (повторно використовує з'єднання), створюється при першому запиті.
@@ -84,7 +102,8 @@ class MonoProvider:
             raise PaymentError(f"mono недоступний: {type(e).__name__}: {e}") from e
 
     async def create_invoice(self, *, amount_kop: int, reference: str, description: str,
-                             redirect_url: str | None, validity_seconds: int) -> Invoice:
+                             redirect_url: str | None, validity_seconds: int,
+                             webhook_url: str | None = None) -> Invoice:
         body = {
             "amount": amount_kop,
             "ccy": UAH,
@@ -96,6 +115,8 @@ class MonoProvider:
         }
         if redirect_url:
             body["redirectUrl"] = redirect_url  # куди повернути людину після оплати
+        if webhook_url:
+            body["webHookUrl"] = webhook_url    # куди mono надішле «статус змінився»
         data = await self._request("POST", "/api/merchant/invoice/create", json=body)
         if not data.get("invoiceId") or not data.get("pageUrl"):
             raise PaymentError(f"mono не повернув invoiceId/pageUrl: {data}")
@@ -111,3 +132,69 @@ class MonoProvider:
             # Напр. reversed (повернення коштів) — поки не обробляємо, але й мовчки не ковтаємо.
             raise PaymentError(f"mono: невідомий статус {raw!r} для рахунку {invoice_id}")
         return status
+
+    # ---------- webhook ----------
+
+    async def _fetch_pubkey(self) -> None:
+        data = await self._request("GET", "/api/merchant/pubkey")
+        try:
+            # mono віддає PEM-ключ, ще й закодований у base64: спершу base64 → PEM → ключ.
+            key = serialization.load_pem_public_key(base64.b64decode(data["key"]))
+        except (KeyError, ValueError, TypeError) as e:
+            raise PaymentError(f"mono: не вдалося прочитати відкритий ключ: {e}") from e
+        if not isinstance(key, ec.EllipticCurvePublicKey):
+            raise PaymentError("mono: відкритий ключ не ECDSA")
+        self._pubkey = key
+        self._pubkey_fetched_at = time.monotonic()
+        log.info("mono: відкритий ключ для перевірки webhook отримано")
+
+    @staticmethod
+    def _matches(key: ec.EllipticCurvePublicKey, body: bytes, signature: bytes) -> bool:
+        try:
+            key.verify(signature, body, ec.ECDSA(hashes.SHA256()))
+            return True
+        except InvalidSignature:
+            return False
+
+    async def verify_signature(self, body: bytes, x_sign: str | None) -> bool:
+        """Чи підписано ЦІ САМІ байти тіла ключем mono.
+
+        Саме «сирі» байти, а не розібраний JSON: якщо розібрати й зібрати JSON знову,
+        пробіли чи порядок полів зміняться — і справжній підпис перестане збігатися.
+        """
+        if not x_sign:
+            return False
+        try:
+            signature = base64.b64decode(x_sign, validate=True)
+        except ValueError:
+            return False
+        if self._pubkey is None:
+            await self._fetch_pubkey()  # перший webhook після старту — ключа ще немає
+        if self._matches(self._pubkey, body, signature):
+            return True
+        # Не збіглося. Можливо, mono змінив ключ — тоді варто перезапитати (так радить документація).
+        # Але НЕ щоразу: інакше будь-хто, засипаючи нас фальшивими webhook-ами, змусив би нас
+        # засипати mono запитами за ключем — і mono заблокував би нас за 429.
+        if time.monotonic() - self._pubkey_fetched_at < PUBKEY_REFRESH_INTERVAL:
+            return False
+        await self._fetch_pubkey()
+        return self._matches(self._pubkey, body, signature)
+
+    async def parse_webhook(self, body: bytes, headers) -> WebhookEvent:
+        # 1) СПЕРШУ підпис, ПОТІМ усе інше. Непідписаним даним не віримо навіть у дрібницях.
+        if not await self.verify_signature(body, headers.get("X-Sign")):
+            raise WebhookRejected("підпис X-Sign не збігся")
+        try:
+            data = json.loads(body)
+        except ValueError as e:
+            raise WebhookRejected("тіло — не JSON") from e
+        invoice_id, raw_status = data.get("invoiceId"), data.get("status")
+        if not invoice_id or not raw_status:
+            raise WebhookRejected("немає invoiceId або status")
+        amount = data.get("amount")
+        return WebhookEvent(
+            invoice_id=invoice_id,
+            status=_STATUS_MAP.get(raw_status),
+            raw_status=raw_status,
+            amount_kop=amount if isinstance(amount, int) and not isinstance(amount, bool) else None,
+        )

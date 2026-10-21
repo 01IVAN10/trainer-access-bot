@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
-from bot import db, texts
+from bot import billing, db, texts
 from bot.config import Config
 from bot.handlers.common import edit
 from bot.handlers.plans import find_plan, unavailable
@@ -67,6 +67,7 @@ async def cb_buy(callback: CallbackQuery, callback_data: PlanCb, config: Config,
                 reference=f"payment-{payment_id}",
                 description=f"{texts.BUSINESS_NAME} — {plan.title}",
                 redirect_url=f"https://t.me/{me.username}",  # після оплати — назад у бот
+                webhook_url=config.webhook_url,               # None → лише кнопка і фонова звірка
                 validity_seconds=int(INVOICE_TTL.total_seconds()),
             )
         except PaymentError as e:
@@ -103,15 +104,12 @@ async def cb_check(callback: CallbackQuery, callback_data: PayCb, config: Config
             log.warning("Статус платежу #%s не отримано: %s", payment["id"], e)
             await callback.answer(texts.PAYMENT_PROVIDER_DOWN, show_alert=True)
             return
-        await db.set_payment_status(payment["id"], status)
+    # Та сама функція, що для webhook і звірки (bot/billing.py). Ідемпотентно: якщо вже
+    # зараховано іншим шляхом — поверне None, тоді просто показуємо поточну підписку.
+    newly = await billing.record_status(payment["id"], status, plans, utcnow())
 
     if status == "success":
-        # Ідемпотентно: якщо вже зараховано (повторне натискання, webhook) — поверне None.
-        sub = await db.apply_payment(payment["id"], plans, utcnow())
-        if sub is not None:
-            log.info("PAID | user=%s | payment=#%s | до %s", payment["user_id"], payment["id"], sub.expires_at)
-        else:
-            sub = await db.get_subscription(payment["user_id"])
+        sub = newly or await db.get_subscription(payment["user_id"])
         await edit(callback, texts.payment_success_text(plan, sub, config.timezone))  # без кнопок
         await callback.answer("Оплату отримано ✅")
     elif status in ("created", "processing"):

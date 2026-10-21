@@ -235,3 +235,21 @@ def test_demo_full_purchase():
     _, sub = run(script)
     assert run.bank.created[0]["amount_kop"] == 1000
     assert sub.plan_id == "demo" and sub.expires_at - utcnow() <= timedelta(minutes=5)
+
+
+def test_webhook_url_passed_to_bank_only_when_configured():
+    """Без WEBHOOK_BASE_URL (Mac без тунелю) — рахунок без webhook; з ним — з адресою /webhooks/mono."""
+    from dataclasses import replace
+    for base, expected in (("", None), ("https://bot.example.com", "https://bot.example.com/webhooks/mono")):
+        bank = FakeProvider()
+
+        async def go():
+            await db.init(":memory:")
+            bot, _ = make_bot()
+            try:
+                await DP.feed_update(bot, callback_update(BUY_MONTH), plans=PLANS, provider=bank,
+                                     config=replace(make_config(), webhook_base_url=base))
+            finally:
+                await db.close()
+        asyncio.run(go())
+        assert bank.created[0]["webhook_url"] == expected

@@ -87,3 +87,17 @@ def test_all_errors_reported_at_once(tmp_path):
 def test_empty_file(tmp_path):
     with pytest.raises(ValueError, match="немає жодного тарифу"):
         load_plans(_write(tmp_path, "plans: []"))
+
+
+def test_demo_plan_hidden_without_demo_mode():
+    from bot.plans import available_plans
+    plans = load_plans()
+    assert [p.id for p in available_plans(plans, demo_mode=True)] == ["demo", "month", "quarter"]
+    assert [p.id for p in available_plans(plans, demo_mode=False)] == ["month", "quarter"]
+
+
+def test_callback_data_fits_telegram_limit():
+    """Telegram обмежує дані кнопки 64 байтами. Довгий id тарифу зламав би кнопки «мовчки»."""
+    from bot.keyboards import PlanCb
+    for plan in load_plans().values():
+        assert len(PlanCb(action="view", plan_id=plan.id).pack().encode()) <= 64

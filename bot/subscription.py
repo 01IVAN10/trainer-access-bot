@@ -18,10 +18,15 @@
                       нагадування  нагадування  «доступ ще є»                    з каналу
 """
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from bot.plans import Plan
+
+
+def utcnow() -> datetime:
+    """ЄДИНЕ місце, де бот питає «котра година». Логіка нижче отримує now параметром."""
+    return datetime.now(timezone.utc)
 
 
 class Status(Enum):
@@ -114,3 +119,20 @@ def decide(sub: Subscription, plan: Plan, now: datetime) -> Action:
     if count is not None:
         return Action(ActionKind.REMIND, reminders_sent=count)
     return Action(ActionKind.NOTHING)
+
+
+def purchase_blocker(plan: Plan, sub: Subscription | None, sub_plan: Plan | None,
+                     now: datetime) -> str | None:
+    """Чи можна купити цей тариф ЗАРАЗ. None — можна; інакше — пояснення для людини.
+
+    Правило (узгоджено 21.10): демо-тариф — лише для тих, у кого зараз немає ПЛАТНОГО доступу.
+    Інакше підписка «переїхала» б на демо: тариф став би demo, і пільговий період
+    скоротився б з 1 дня до 1 хвилини — людина, яка заплатила за місяць, постраждала б.
+    Повторювати демо можна скільки завгодно (гроші тестові).
+    Платний тариф можна купити завжди: діючі дні додаються, а не згоряють.
+    """
+    if not plan.demo or sub is None or sub.removed or sub_plan is None or sub_plan.demo:
+        return None
+    if get_status(sub.expires_at, sub_plan.grace, now) in (Status.ACTIVE, Status.GRACE):
+        return "У вас уже є оплачена підписка 🙂 Демо-тариф — для тих, хто ще не підписаний."
+    return None

@@ -168,3 +168,37 @@ def test_month_plan_early_renewal_resets_reminders():
     assert sub.expires_at == NOW + 60 * DAY  # 2 дні, що лишались, не згоріли
     log = simulate(sub, MONTH, renewed_at, NOW + 62 * DAY, timedelta(hours=1))
     assert [event for _, event in log] == ["нагадування 1", "нагадування 2", "закінчилась", "видалено"]
+
+
+# ---------- хто що може купити (правило узгоджене 21.10) ----------
+
+from bot.subscription import purchase_blocker  # noqa: E402
+
+
+def test_demo_blocked_while_paid_subscription_active():
+    """Інакше тариф підписки став би demo, і grace скоротився б з 1 дня до 1 хвилини."""
+    sub = Subscription(user_id=1, plan_id="month", expires_at=NOW + 10 * DAY)
+    assert purchase_blocker(DEMO, sub, MONTH, NOW) is not None
+
+
+def test_demo_blocked_during_paid_grace():
+    sub = Subscription(user_id=1, plan_id="month", expires_at=NOW - timedelta(hours=1))
+    assert purchase_blocker(DEMO, sub, MONTH, NOW) is not None
+
+
+def test_demo_allowed_after_paid_expired_or_removed():
+    expired = Subscription(user_id=1, plan_id="month", expires_at=NOW - 5 * DAY)
+    assert purchase_blocker(DEMO, expired, MONTH, NOW) is None
+    removed = Subscription(user_id=1, plan_id="month", expires_at=NOW + DAY, removed=True)
+    assert purchase_blocker(DEMO, removed, MONTH, NOW) is None
+
+
+def test_demo_can_be_repeated():
+    sub = Subscription(user_id=1, plan_id="demo", expires_at=NOW + timedelta(minutes=3))
+    assert purchase_blocker(DEMO, sub, DEMO, NOW) is None
+
+
+def test_paid_plan_always_allowed():
+    sub = Subscription(user_id=1, plan_id="month", expires_at=NOW + 10 * DAY)
+    assert purchase_blocker(MONTH, sub, MONTH, NOW) is None
+    assert purchase_blocker(MONTH, None, None, NOW) is None

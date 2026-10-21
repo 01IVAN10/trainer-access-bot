@@ -12,6 +12,7 @@
 import os
 import sys
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
@@ -26,6 +27,9 @@ class Config:
     channel_id: int        # закритий канал, доступ до якого продаємо
     admin_chat_id: int     # група власника: сповіщення про оплати, /stats
     mono_token: str        # токен monobank acquiring (тестовий або бойовий)
+    support_contact: str   # куди писати з питань оплати (/paysupport) — обов'язково для бота з оплатами
+    demo_mode: bool        # демо для портфоліо: показувати демо-тариф і позначки «тестова оплата»
+    timezone: str          # у якому часовому поясі показувати дати людям
     db_path: str
 
 
@@ -61,14 +65,34 @@ def _require_chat_id(name: str, channel: bool) -> int:
     return value
 
 
+def _bool(name: str, default: bool = False) -> bool:
+    """Так/ні з .env. Незрозуміле значення — помилка, а не тихе False:
+    інакше DEMO_MODE=yes-please вимкнув би демо, і ніхто б не зрозумів чому."""
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("1", "true", "yes", "on", "так"):
+        return True
+    if raw in ("0", "false", "no", "off", "ні"):
+        return False
+    sys.exit(f"❌ {name}={raw!r}: очікую 1 або 0")
+
+
 def load_config() -> Config:
     cfg = Config(
         bot_token=_require("BOT_TOKEN"),
         channel_id=_require_chat_id("CHANNEL_ID", channel=True),
         admin_chat_id=_require_chat_id("ADMIN_CHAT_ID", channel=False),
         mono_token=_require("MONO_TOKEN"),
+        support_contact=_require("SUPPORT_CONTACT"),
+        demo_mode=_bool("DEMO_MODE"),
+        timezone=os.getenv("TIMEZONE", "Europe/Kyiv").strip(),
         db_path=os.getenv("DB_PATH", "storage/bot.db"),
     )
+    try:
+        ZoneInfo(cfg.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        sys.exit(f"❌ TIMEZONE={cfg.timezone!r} — невідомий часовий пояс (приклад: Europe/Kyiv)")
     # Типова помилка копіювання: один і той самий ID в обох полях.
     if cfg.channel_id == cfg.admin_chat_id:
         sys.exit("❌ CHANNEL_ID і ADMIN_CHAT_ID однакові. Канал (що продаємо) і "
@@ -84,4 +108,7 @@ if __name__ == "__main__":
     print(f"   CHANNEL_ID:    {cfg.channel_id}")
     print(f"   ADMIN_CHAT_ID: {cfg.admin_chat_id}")
     print(f"   MONO_TOKEN:    {cfg.mono_token[:4]}…")
+    print(f"   SUPPORT:       {cfg.support_contact}")
+    print(f"   DEMO_MODE:     {'так' if cfg.demo_mode else 'ні'}")
+    print(f"   TIMEZONE:      {cfg.timezone}")
     print(f"   DB_PATH:       {cfg.db_path}")

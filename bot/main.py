@@ -1,24 +1,31 @@
 """
 Точка входу. Запуск:  python -m bot.main
 
-Порядок, як в етапі 1: логи → конфіг → бот → перевірки (fail fast) → polling.
-Крок 1: при старті завантажуються тарифи (data/plans.yaml) і база даних.
-Меню, оплата і доступ з'являться на кроках 2–6.
+Порядок: логи → конфіг → тарифи → бот → перевірки (fail fast) → БД → polling.
+Крок 2: меню, тарифи, «Моя підписка». Оплата і доступ з'являться на кроках 3–6.
 """
 import asyncio
 import logging
 import sys
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import BotCommand
 
 from bot import db
+from bot.app import build_dispatcher
 from bot.checks import check_admin_chat, check_channel, check_mono
 from bot.config import load_config
 from bot.plans import load_plans
+
+# Меню команд (кнопка «Меню» біля поля вводу). /paysupport — обов'язкова для бота з оплатами.
+COMMANDS = [
+    BotCommand(command="start", description="Почати спочатку"),
+    BotCommand(command="my", description="Моя підписка"),
+    BotCommand(command="help", description="Що вміє бот"),
+    BotCommand(command="paysupport", description="Підтримка з оплати"),
+]
 
 
 async def run_checks(bot: Bot, config) -> None:
@@ -51,16 +58,13 @@ async def main() -> None:
     logging.info("Тарифи: %s", ", ".join(f"{p.id} ({p.price_uah} грн)" for p in plans.values()))
 
     bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
-
-    # Тимчасовий /start — лише щоб побачити, що бот живий. Справжній — на кроці 2.
-    @dp.message(CommandStart(), F.chat.type == "private")
-    async def start(message: Message) -> None:
-        await message.answer("💪 «Сила вдома» — бот у розробці. Скоро тут будуть тарифи.")
+    dp = build_dispatcher(config, plans)  # роутери, фільтри, middleware — див. bot/app.py
 
     try:
         await run_checks(bot, config)
         await db.init(config.db_path)
+        await bot.set_my_commands(COMMANDS)
+        logging.info("Демо-режим: %s", "так" if config.demo_mode else "ні")
         # ВІДМІННІСТЬ від етапу 1: там ми викидали події, що прийшли, поки бот був вимкнений
         # (щоб AI не відповідав на старе пачкою). Тут так не можна: серед них можуть бути
         # заявки на вступ від людей, які ВЖЕ заплатили. Тому drop_pending_updates=False.

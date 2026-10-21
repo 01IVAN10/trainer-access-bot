@@ -117,6 +117,15 @@ def _parse_plan(raw: dict, n: int) -> tuple[Plan | None, list[str]]:
     ), []
 
 
+def available_plans(plans: dict[str, Plan], demo_mode: bool) -> list[Plan]:
+    """Які тарифи показувати в меню. Демо-тариф — лише в демо-режимі (DEMO_MODE=1).
+
+    Сам тариф з YAML не прибираємо: якщо хтось купив демо, а потім режим вимкнули,
+    підписка має й далі знаходити свій тариф (нагадування, grace).
+    """
+    return [p for p in plans.values() if demo_mode or not p.demo]
+
+
 def load_plans(path: Path = PLANS_PATH) -> dict[str, Plan]:
     """Завантажує тарифи. Будь-яка помилка → ValueError з УСІМА проблемами одразу.
 

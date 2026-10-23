@@ -37,6 +37,10 @@ async def reconcile_once(bot: Bot, provider: PaymentProvider, plans: dict[str, P
             log.warning("Звірка: mono недоступний (%s) — пропускаю до наступного проходу", e)
             break
         sub = await billing.record_status(payment["id"], status, plans, utcnow(), bot, config)
+        # Крок 8: прибрати кнопки зі старого рахунку. Для success — лише якщо САМЕ ми зарахували
+        # (інакше рахунок уже закрив інший шлях); failure/expired — close_invoice перевірить сам.
+        if status != "success" or sub is not None:
+            await billing.close_invoice(bot, payment, status)
         if sub is not None:
             applied += 1
             log.info("Звірка: платіж #%s зараховано (webhook не дійшов або вимкнений)", payment["id"])

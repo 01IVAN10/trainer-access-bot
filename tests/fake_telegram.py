@@ -14,9 +14,10 @@ from itertools import count
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramServerError
 from aiogram.methods import (
-    AnswerCallbackQuery, ApproveChatJoinRequest, BanChatMember, CreateChatInviteLink, EditMessageText, GetChatMember,
+    AnswerCallbackQuery, ApproveChatJoinRequest, BanChatMember, CreateChatInviteLink, DeclineChatJoinRequest,
+    EditMessageText, GetChatMember,
     GetMe, SendMessage, TelegramMethod, UnbanChatMember,
 )
 from aiogram.types import (
@@ -53,11 +54,15 @@ class FakeSession(BaseSession):
         self.ban_fails = False                 # Telegram тимчасово не відповідає
         self.on_ban = None                     # гачок: «щось сталося саме в мить бану» (гонки)
         self.explode_for: set[int] = set()     # несподівана помилка для цих людей (не TelegramAPIError)
+        self.edit_fails = False                # людина видалила повідомлення → редагувати нічого
+        self.decline_error: str | None = None  # "missing" — заявки вже немає; "down" — Telegram не відповів
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
         if isinstance(method, SendMessage) and method.chat_id in self.cannot_message:
             raise TelegramForbiddenError(method=method, message="Forbidden: bot can't initiate conversation with a user")
+        if isinstance(method, EditMessageText) and self.edit_fails:
+            raise TelegramBadRequest(method=method, message="Bad Request: message to edit not found")
         if isinstance(method, (SendMessage, EditMessageText)):
             # Telegram повертає надіслане повідомлення — повертаємо схоже.
             return Message(message_id=next(_ids), date=datetime.now(timezone.utc),
@@ -92,6 +97,12 @@ class FakeSession(BaseSession):
             if method.only_if_banned is not True:  # без цього unban вигнав би й учасника — бот так не робить
                 raise AssertionError("unban_chat_member має бути з only_if_banned=True")
             self.banned.discard(method.user_id)
+            return True
+        if isinstance(method, DeclineChatJoinRequest):
+            if self.decline_error == "missing":
+                raise TelegramBadRequest(method=method, message="Bad Request: HIDE_REQUESTER_MISSING")
+            if self.decline_error == "down":
+                raise TelegramServerError(method=method, message="Internal Server Error")
             return True
         if isinstance(method, ApproveChatJoinRequest):
             if self.approve_fails:

@@ -20,7 +20,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from bot import admin_texts, db, texts
 from bot.access import ChannelAccess, grant_after_payment
 from bot.config import Config
-from bot.keyboards import channel_keyboard
+from bot.keyboards import channel_keyboard, retry_keyboard
 from bot.notify import tell_admins
 from bot.plans import Plan
 from bot.subscription import Subscription
@@ -75,3 +75,31 @@ async def notify_paid(bot: Bot, sub: Subscription, plans: dict[str, Plan], tz: s
                     sub.user_id, e)
     except TelegramAPIError as e:
         log.warning("Не вдалося повідомити user=%s про оплату: %s", sub.user_id, e)
+
+
+OPEN = ("created", "processing")
+
+
+async def close_invoice(bot: Bot, payment: dict, status: str) -> None:
+    """Крок 8: оплату підтвердили webhook або звірка — прибрати кнопки зі старого рахунку.
+
+    Без цього під уже оплаченим рахунком лишаються «💳 Оплатити» і «Перевірити» (inline-кнопки
+    живуть вічно). Людина натисне «Оплатити» ще раз — і побачить сторінку mono «рахунок оплачено»
+    або згорілий рахунок. Плутанина на рівному місці.
+
+    payment — запис ДО оновлення статусу: якщо він уже був остаточним, рахунок закрив хтось інший.
+    Кнопка «Перевірити» сюди не ходить — вона й так редагує саме це повідомлення.
+    """
+    message_id = payment.get("message_id")
+    if message_id is None or payment["status"] not in OPEN or status in OPEN:
+        return
+    if status == "success":
+        text, markup = texts.INVOICE_PAID, None
+    else:  # failure / expired — одразу кнопка «спробувати ще раз»
+        text = texts.PAYMENT_FAILED if status == "failure" else texts.PAYMENT_EXPIRED
+        markup = retry_keyboard(payment["plan_id"])
+    try:
+        await bot.edit_message_text(text, chat_id=payment["user_id"], message_id=message_id, reply_markup=markup)
+    except TelegramAPIError as e:
+        # Повідомлення видалили, текст той самий («not modified») тощо — не страшно, це косметика.
+        log.info("Рахунок #%s: не вдалося оновити повідомлення: %s", payment["id"], e)

@@ -21,7 +21,7 @@ import logging
 from datetime import datetime, timedelta
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 
 from bot import admin_texts, db, texts
 from bot.access import ChannelAccess, Kick, kick
@@ -34,6 +34,10 @@ from bot.subscription import ActionKind, Subscription, decide, has_access, utcno
 log = logging.getLogger(__name__)
 
 INTERVAL_SECONDS = 30
+# Крок 8: скільки заявка в канал може «висіти» без оплати. Досить, щоб людина встигла
+# дочекатися зарплати чи порадитися вдома; не так довго, щоб у каналі збиралися сотні заявок
+# від тих, хто просто подивився.
+JOIN_REQUEST_TTL = timedelta(hours=48)
 # Тариф прибрали з plans.yaml, а підписка за нього ще є: без нагадувань і без grace.
 _NO_PLAN = Plan(id="?", title="", description="", price_uah=1, duration=timedelta(days=1),
                 reminders=(), grace=timedelta(0))
@@ -43,7 +47,7 @@ async def run_once(bot: Bot, plans: dict[str, Plan], config: Config, access: Cha
                    now: datetime) -> dict[str, int]:
     """Один прохід. now — параметром (як у всій логіці): тести «перемотують» час."""
     horizon = max((r for p in plans.values() for r in p.reminders), default=timedelta(0))
-    done = {"remind": 0, "expired": 0, "removed": 0}
+    done = {"remind": 0, "expired": 0, "removed": 0, "declined": 0}
     for sub in await db.subscriptions_due(now, horizon):
         plan = plans.get(sub.plan_id)
         action = decide(sub, plan or _NO_PLAN, now)
@@ -64,7 +68,41 @@ async def run_once(bot: Bot, plans: dict[str, Plan], config: Config, access: Cha
         except Exception:
             # Одна «погана» підписка не має зупиняти обробку решти.
             log.exception("Планувальник: помилка для user=%s", sub.user_id)
+    try:
+        done["declined"] = await _decline_stale_requests(bot, access, now)
+    except Exception:
+        log.exception("Планувальник: помилка під час відхилення старих заявок")
     return done
+
+
+async def _decline_stale_requests(bot: Bot, access: ChannelAccess, now: datetime) -> int:
+    """Заявки без оплати, старші за JOIN_REQUEST_TTL, — відхилити (крок 8).
+
+    Порядок: СПЕРШУ відхилити в Telegram, ПОТІМ стерти в базі. Навпаки небезпечно: стерли,
+    а Telegram не відповів — заявка висить у каналі, а бот про неї забув назавжди.
+    Telegram каже «такої заявки немає» (людина скасувала, схвалили вручну, щойно оплатила й
+    схвалив інший шлях) — це не помилка: мовчки прибираємо запис, людині нічого не пишемо.
+    Гонка з оплатою безпечна: оплата забирає запис першою (pop) → approve впаде (заявку вже
+    відхилено) → людина отримає кнопку «Вступити в канал» і подасть нову — її схвалять одразу.
+    """
+    declined = 0
+    for user_id in await db.stale_join_requests(now - JOIN_REQUEST_TTL):
+        try:
+            await bot.decline_chat_join_request(access.channel_id, user_id)
+        except TelegramBadRequest as e:
+            # Заявки вже немає: скасувала сама, схвалили вручну або щойно — після оплати. Писати
+            # «вашу заявку скасовано» НЕ можна: людина може бути вже в каналі. Мовчки прибираємо запис.
+            log.info("JOIN | user=%s — заявки в Telegram уже немає (%s)", user_id, e.message)
+            await db.pop_join_request(user_id)
+            continue
+        except TelegramAPIError as e:
+            log.warning("JOIN | user=%s — не вдалося відхилити (%s), спробую пізніше", user_id, e)
+            continue  # запис лишається → наступний прохід спробує ще
+        if await db.pop_join_request(user_id):  # рівно один прохід (і не оплата) забрав запис
+            declined += 1
+            log.info("JOIN | user=%s — заявку без оплати відхилено через %s", user_id, JOIN_REQUEST_TTL)
+            await _say(bot, user_id, texts.join_request_expired(JOIN_REQUEST_TTL), choose_plan_keyboard())
+    return declined
 
 
 def _renewable(plan: Plan | None, plans: dict[str, Plan], config: Config) -> Plan | None:
@@ -118,7 +156,8 @@ async def run_forever(bot: Bot, plans: dict[str, Plan], config: Config, access: 
         try:
             done = await run_once(bot, plans, config, access, utcnow())
             if any(done.values()):
-                log.info("Планувальник: нагадувань %(remind)s, «закінчилась» %(expired)s, видалено %(removed)s",
+                log.info("Планувальник: нагадувань %(remind)s, «закінчилась» %(expired)s, видалено %(removed)s, "
+                         "старих заявок відхилено %(declined)s",
                          done)
         except Exception:
             log.exception("Планувальник: несподівана помилка")  # цикл не має померти

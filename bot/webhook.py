@@ -71,6 +71,8 @@ async def mono_webhook(request: web.Request) -> web.Response:
         log.exception("WEBHOOK: помилка обробки платежу #%s", payment["id"])
         return web.Response(status=503, text="try later")  # mono повторить
     log.info("WEBHOOK: платіж #%s → %s", payment["id"], event.status)
+    if event.status != "success" or sub is not None:  # прибрати кнопки зі старого рахунку (крок 8)
+        await billing.close_invoice(request.app[BOT], payment, event.status)
     if sub is not None:  # саме цей webhook продовжив підписку → кажемо людині
         await billing.notify_paid(request.app[BOT], sub, request.app[PLANS], request.app[CONFIG].timezone,
                                   request.app[ACCESS])

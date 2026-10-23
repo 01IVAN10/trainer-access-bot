@@ -40,6 +40,8 @@ async def _show_invoice(callback: CallbackQuery, plan: Plan, payment: dict, conf
     await edit(callback,
                texts.invoice_text(plan, payment["amount_kop"], valid_until, config.timezone, config.demo_mode),
                invoice_keyboard(payment["page_url"], payment["amount_kop"] // 100, payment["id"]))
+    # Крок 8: де людина бачить рахунок — щоб прибрати кнопки, коли оплату підтвердить webhook/звірка.
+    await db.set_invoice_message(payment["id"], callback.message.message_id)
 
 
 @router.callback_query(PlanCb.filter(F.action == "buy"))

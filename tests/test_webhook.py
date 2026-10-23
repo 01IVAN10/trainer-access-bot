@@ -16,7 +16,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from bot import db
+from bot import db, texts
 from bot.payments.mono import PUBKEY_REFRESH_INTERVAL, MonoProvider
 from bot.plans import load_plans
 from bot.subscription import utcnow
@@ -189,6 +189,36 @@ def test_mono_rotated_key():
     recent, later, sub = w.run(script)
     assert recent == 403 and later == 200 and sub is not None
     assert w.pubkey_requests == 2
+
+
+def test_three_webhooks_close_invoice_once():
+    """Крок 8: кнопки під рахунком прибираємо один раз, а не на кожен повтор webhook."""
+    w = World()
+
+    async def script(client):
+        await db.set_invoice_message(1, 555)
+        for _ in range(3):
+            await w.post(client, event("success"))
+
+    w.run(script)
+    closing = [e for e in w.session.edited() if e.message_id == 555]
+    assert len(closing) == 1 and closing[0].text == texts.INVOICE_PAID and closing[0].reply_markup is None
+
+
+def test_late_duplicate_failure_does_not_overwrite_new_invoice():
+    """Оплата не пройшла → «Спробувати ще раз» → у ТОМУ Ж повідомленні вже новий рахунок.
+    Запізнілий повтор webhook про СТАРИЙ платіж не має затерти новий рахунок написом «не пройшла»."""
+    w = World()
+
+    async def script(client):
+        await db.set_invoice_message(1, 555)
+        await w.post(client, event("failure"))
+        new = await db.create_payment(USER.id, PLANS["month"], utcnow())   # «Спробувати ще раз»
+        await db.set_invoice_message(new, 555)                             # новий рахунок — те саме повідомлення
+        await w.post(client, event("failure"))                             # mono повторив старий webhook
+
+    w.run(script)
+    assert len([e for e in w.session.edited() if e.message_id == 555]) == 1
 
 
 def test_out_of_order_processing_after_success():

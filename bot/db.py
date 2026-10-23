@@ -117,6 +117,12 @@ MIGRATIONS = [
     );
     CREATE INDEX IF NOT EXISTS idx_admin_actions_user ON admin_actions(user_id);
     """,
+    # 5 (крок 8): у якому повідомленні людина бачить рахунок (кнопки «Оплатити» / «Перевірити»).
+    # Коли оплату підтвердив webhook чи звірка, бот прибере ці кнопки — щоб не висіли «Оплатити»
+    # під уже оплаченим рахунком.
+    """
+    ALTER TABLE payments ADD COLUMN message_id INTEGER;
+    """,
 ]
 
 
@@ -245,6 +251,13 @@ async def set_invoice(payment_id: int, invoice_id: str, page_url: str, valid_unt
             "UPDATE payments SET invoice_id = ?, page_url = ?, valid_until = ? WHERE id = ?",
             (invoice_id, page_url, _iso(valid_until), payment_id),
         )
+        await _db.commit()
+
+
+async def set_invoice_message(payment_id: int, message_id: int) -> None:
+    """Запам'ятати повідомлення з рахунком (останнє, де людина його бачила)."""
+    async with _write_lock:
+        await _db.execute("UPDATE payments SET message_id = ? WHERE id = ?", (message_id, payment_id))
         await _db.commit()
 
 
@@ -549,6 +562,13 @@ async def save_join_request(user_id: int, now: datetime) -> None:
             (user_id, _iso(now)),
         )
         await _db.commit()
+
+
+async def stale_join_requests(before: datetime) -> list[int]:
+    """Заявки, що висять без оплати з часу до `before` (крок 8: їх відхиляємо)."""
+    async with _db.execute("SELECT user_id FROM join_requests WHERE requested_at < ? ORDER BY requested_at",
+                           (_iso(before),)) as cur:
+        return [r["user_id"] for r in await cur.fetchall()]
 
 
 async def pop_join_request(user_id: int) -> bool:

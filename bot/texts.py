@@ -233,3 +233,12 @@ def granted_by_admin_text(sub: Subscription, tz: str, granted: str) -> str:
 def revoked_by_admin_text(support: str) -> str:
     return ("⛔️ <b>Доступ до каналу закрито адміністратором.</b>\n\n"
             f"Якщо це помилка — напишіть {escape(support)}.")
+
+
+# ---------- прибирання (крок 8) ----------
+
+INVOICE_PAID = "🧾 Рахунок оплачено ✅ — подробиці в повідомленні нижче."
+
+def join_request_expired(waited: timedelta) -> str:
+    return (f"Вашу заявку в канал «{BUSINESS_NAME}» скасовано: минуло {format_left(waited)}, а підписки немає.\n\n"
+            "Захочете приєднатися — оберіть тариф, і після оплати я впущу вас одразу.")

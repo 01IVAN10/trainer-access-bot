@@ -8,7 +8,7 @@
 from aiogram import Dispatcher, F
 
 from bot.config import Config
-from bot.handlers import join, my, pay, plans as plans_handlers, start
+from bot.handlers import admin, join, my, pay, plans as plans_handlers, start
 from bot.middlewares import AntiFloodMiddleware, UserTrackingMiddleware
 from bot.payments import PaymentProvider
 from bot.plans import Plan
@@ -35,6 +35,7 @@ def build_dispatcher(config: Config, plans: dict[str, Plan], provider: PaymentPr
 
     # fallback — ОСТАННІЙ: він ловить усе, що не впізнали інші.
     # join — заявки на вступ у канал (не повідомлення, тому фільтр «особисті чати» йому не потрібен).
+    # admin — команди власниці; свій фільтр «лише адмін-група» (bot/handlers/admin.py).
     # dp["access"] (посилання на канал) main.py додасть після старту — бот створює посилання сам.
-    dp.include_routers(join.router, *client_routers)
+    dp.include_routers(join.router, admin.router, *client_routers)
     return dp

@@ -65,7 +65,8 @@ async def mono_webhook(request: web.Request) -> web.Response:
         return web.Response(text="amount mismatch")
 
     try:
-        sub = await billing.record_status(payment["id"], event.status, request.app[PLANS], utcnow())
+        sub = await billing.record_status(payment["id"], event.status, request.app[PLANS], utcnow(),
+                                         request.app[BOT], request.app[CONFIG])
     except Exception:
         log.exception("WEBHOOK: помилка обробки платежу #%s", payment["id"])
         return web.Response(status=503, text="try later")  # mono повторить

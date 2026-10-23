@@ -30,7 +30,10 @@ from bot.config import Config
 
 USER = User(id=111, is_bot=False, first_name="Олена", username="olena")
 PRIVATE = Chat(id=111, type="private")
-ADMIN_GROUP = Chat(id=-100222, type="supergroup", title="Адмінка")
+ADMIN_CHAT_ID = -1002                                           # той самий, що в make_config()
+ADMIN_CHAT = Chat(id=ADMIN_CHAT_ID, type="supergroup", title="Адмінка")
+ADMIN_USER = User(id=777, is_bot=False, first_name="Тренерка", username="trainer")
+ADMIN_GROUP = Chat(id=-100222, type="supergroup", title="Чужа група")  # НЕ адмінка: бот має мовчати
 CHANNEL = Chat(id=-1001, type="channel", title="Сила вдома")   # той самий ID, що в make_config()
 INVITE_LINK = "https://t.me/+TestInviteLink"
 ACCESS = ChannelAccess(channel_id=CHANNEL.id, invite_link=INVITE_LINK)
@@ -103,9 +106,15 @@ class FakeSession(BaseSession):
     async def stream_content(self, *args, **kwargs):  # pragma: no cover — не потрібне
         raise NotImplementedError
 
-    # Зручності для перевірок
+    # Зручності для перевірок.
+    # sent() — що побачили КЛІЄНТИ (усе, крім адмін-групи); admin() — що побачила власниця.
+    # Окремо, бо це різні читачі: тест «людині одне повідомлення» не має ламатися від того,
+    # що бот ще й написав в адмінку (крок 7).
     def sent(self) -> list[SendMessage]:
-        return [c for c in self.calls if isinstance(c, SendMessage)]
+        return [c for c in self.calls if isinstance(c, SendMessage) and c.chat_id != ADMIN_CHAT_ID]
+
+    def admin(self) -> list[SendMessage]:
+        return [c for c in self.calls if isinstance(c, SendMessage) and c.chat_id == ADMIN_CHAT_ID]
 
     def edited(self) -> list[EditMessageText]:
         return [c for c in self.calls if isinstance(c, EditMessageText)]
@@ -118,7 +127,7 @@ class FakeSession(BaseSession):
 
 
 def make_config(demo_mode: bool = True) -> Config:
-    return Config(bot_token="123:TEST", channel_id=-1001, admin_chat_id=-1002, mono_token="t",
+    return Config(bot_token="123:TEST", channel_id=-1001, admin_chat_id=ADMIN_CHAT_ID, mono_token="t",
                   support_contact="@support", demo_mode=demo_mode, timezone="Europe/Kyiv",
                   db_path=":memory:")
 
@@ -128,9 +137,9 @@ def make_bot() -> tuple[Bot, FakeSession]:
     return Bot("123:TEST", session=session), session
 
 
-def text_update(text: str, chat: Chat = PRIVATE) -> Update:
+def text_update(text: str, chat: Chat = PRIVATE, user: User = USER) -> Update:
     return Update(update_id=next(_ids), message=Message(
-        message_id=next(_ids), date=datetime.now(timezone.utc), chat=chat, from_user=USER, text=text))
+        message_id=next(_ids), date=datetime.now(timezone.utc), chat=chat, from_user=user, text=text))
 
 
 def callback_update(data: str, user: User = USER) -> Update:

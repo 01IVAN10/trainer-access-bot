@@ -107,7 +107,7 @@ async def cb_check(callback: CallbackQuery, callback_data: PayCb, config: Config
             return
     # Та сама функція, що для webhook і звірки (bot/billing.py). Ідемпотентно: якщо вже
     # зараховано іншим шляхом — поверне None, тоді просто показуємо поточну підписку.
-    newly = await billing.record_status(payment["id"], status, plans, utcnow())
+    newly = await billing.record_status(payment["id"], status, plans, utcnow(), callback.bot, config)
 
     if status == "success":
         sub = newly or await db.get_subscription(payment["user_id"])

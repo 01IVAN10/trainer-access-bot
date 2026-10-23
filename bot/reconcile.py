@@ -36,7 +36,7 @@ async def reconcile_once(bot: Bot, provider: PaymentProvider, plans: dict[str, P
             # Банк лежить — нічого страшного, спробуємо наступного разу. Решту не мучимо.
             log.warning("Звірка: mono недоступний (%s) — пропускаю до наступного проходу", e)
             break
-        sub = await billing.record_status(payment["id"], status, plans, utcnow())
+        sub = await billing.record_status(payment["id"], status, plans, utcnow(), bot, config)
         if sub is not None:
             applied += 1
             log.info("Звірка: платіж #%s зараховано (webhook не дійшов або вимкнений)", payment["id"])

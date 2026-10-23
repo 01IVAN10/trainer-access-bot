@@ -11,7 +11,7 @@ from bot import db
 from bot.plans import load_plans
 from bot.scheduler import run_once
 from bot.subscription import utcnow
-from tests.fake_telegram import ACCESS, USER, buttons, make_bot, make_config
+from tests.fake_telegram import ADMIN_CHAT_ID, ACCESS, USER, buttons, make_bot, make_config
 
 PLANS = load_plans()
 M = timedelta(minutes=1)
@@ -67,6 +67,8 @@ def test_demo_full_cycle_minute_by_minute():
     assert "через 2 хв" in sent[0] and "через 1 хв" in sent[1]     # нагадування за 2 і за 1 хв
     assert sent[2].startswith("⚠️") and "ще 1 хв" in sent[2]        # «закінчилась, доступ ще 1 хв»
     assert sent[3].startswith("⛔️") and len(sent) == 4
+    # власниця дізнається лише про видалення (не про кожне нагадування) — і рівно один раз
+    assert len(w.tg.admin()) == 1 and "Підписку не продовжено" in w.tg.admin()[0].text
     # видалили так, щоб людина МОГЛА повернутися: ban + unban, а не просто ban
     assert len(w.tg.of(BanChatMember)) == 1 and len(w.tg.of(UnbanChatMember)) == 1
     assert USER.id not in w.tg.in_channel and USER.id not in w.tg.banned
@@ -152,6 +154,7 @@ def test_owner_is_never_kicked():
     assert w.tg.of(BanChatMember) == [] and sub.removed
     # і не пишемо власниці «⛔️ доступ закрито» про її ж канал
     assert not any(m.text.startswith("⛔️") for m in w.tg.sent())
+    assert w.tg.admin() == []                              # і в адмінку «не продовжила» — теж ні
 
 
 def test_user_already_left_channel():
@@ -284,3 +287,17 @@ def test_claims_refuse_stale_expiry_date():
                 await db.claim_removal(USER.id, old))
 
     assert w.run(script) == (False, False, False)
+
+
+def test_admin_chat_down_does_not_break_removal():
+    """Бота прибрали з адмін-групи. Видалення й повідомлення людині мають відпрацювати як завжди:
+    сповіщення власниці — «на додачу», а не умова (мутація «tell_admins не ловить помилку» жила
+    без цього тесту: для оплати страхує billing, а тут страховки немає)."""
+    w = World()
+
+    async def script(w):
+        w.tg.cannot_message.add(ADMIN_CHAT_ID)
+        return await w.tick(10 * M)
+
+    done = w.run(script)
+    assert done["removed"] == 1 and w.tg.sent()[-1].text.startswith("⛔️")

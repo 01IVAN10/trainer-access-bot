@@ -8,6 +8,7 @@
   3) фонова звірка — раз на хвилину питає mono про незавершені платежі (bot/reconcile.py).
 Крок 5: доступ до каналу — посилання із заявками (bot/access.py, bot/handlers/join.py).
 Крок 6: планувальник (bot/scheduler.py) — 4-та фонова річ: нагадування, «закінчилась», видалення.
+Крок 7: адмінка — сповіщення в адмін-групу (bot/notify.py), команди (bot/handlers/admin.py).
 """
 import asyncio
 import logging
@@ -17,7 +18,7 @@ from aiogram import Bot
 from aiohttp import web
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeChat
 
 from bot import db
 from bot.access import ensure_invite_link
@@ -36,6 +37,14 @@ COMMANDS = [
     BotCommand(command="my", description="Моя підписка"),
     BotCommand(command="help", description="Що вміє бот"),
     BotCommand(command="paysupport", description="Підтримка з оплати"),
+]
+# Окреме меню для адмін-групи (крок 7): там кнопка «Меню» показує команди власниці, а не клієнтські.
+ADMIN_COMMANDS = [
+    BotCommand(command="stats", description="Підписники і виручка"),
+    BotCommand(command="user", description="Усе про людину: /user @username"),
+    BotCommand(command="grant", description="Видати доступ: /grant @username 30"),
+    BotCommand(command="revoke", description="Закрити доступ: /revoke @username"),
+    BotCommand(command="admin", description="Довідка по командах"),
 ]
 
 
@@ -78,6 +87,7 @@ async def main() -> None:
         await run_checks(bot, config)
         await db.init(config.db_path)
         await bot.set_my_commands(COMMANDS)
+        await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=config.admin_chat_id))
         # Посилання на канал із заявками — бот створює його сам (один раз, потім бере з бази).
         access = await ensure_invite_link(bot, config.channel_id)
         dp["access"] = access

@@ -103,6 +103,20 @@ MIGRATIONS = [
         requested_at TEXT NOT NULL
     );
     """,
+    # 4 (крок 7): журнал РУЧНИХ дій адміна (/grant, /revoke). Оплати й так мають слід у payments,
+    # а «видала 30 днів вручну» — ні. Через місяць хтось спитає «чому в Олени доступ без оплати?» —
+    # відповідь має бути в базі: хто, коли, що саме.
+    """
+    CREATE TABLE IF NOT EXISTS admin_actions (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin_id   INTEGER NOT NULL,                 -- хто з адмін-групи виконав команду
+        action     TEXT NOT NULL CHECK (action IN ('grant', 'revoke')),
+        user_id    INTEGER NOT NULL,                 -- кому
+        details    TEXT NOT NULL DEFAULT '',         -- «+30 дн., до …»
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_admin_actions_user ON admin_actions(user_id);
+    """,
 ]
 
 
@@ -169,6 +183,25 @@ async def upsert_user(user_id: int, username: str | None, full_name: str) -> Non
             (user_id, username, full_name),
         )
         await _db.commit()
+
+
+async def get_user(user_id: int) -> dict | None:
+    async with _db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def find_user(query: str) -> dict | None:
+    """Людина за ID (123456) або username (@olena / olena). Шукаємо лише серед тих, хто
+    писав боту: інших бот не знає (і не зможе їм написати)."""
+    query = query.strip()
+    if query.lstrip("-").isdigit():
+        return await get_user(int(query))
+    # Username у Telegram не залежить від регістру: @Olena і @olena — та сама людина.
+    async with _db.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE",
+                           (query.removeprefix("@"),)) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
 
 
 # ---------- платежі ----------
@@ -386,6 +419,107 @@ async def release_removal(user_id: int, expires_at: datetime) -> None:
     await _claim(
         "UPDATE subscriptions SET removed = 0 WHERE user_id = ? AND expires_at = ? AND removed = 1",
         (user_id, _iso(expires_at)))
+
+# ---------- адмінка (крок 7) ----------
+
+async def live_subscriptions() -> list[Subscription]:
+    """Усі невидалені підписки — для /stats (активна / пільговий період / ще не видалена)."""
+    async with _db.execute("SELECT * FROM subscriptions WHERE removed = 0") as cur:
+        return [_row_to_sub(r) for r in await cur.fetchall()]
+
+
+async def count(sql: str, params: tuple = ()) -> int:
+    async with _db.execute(sql, params) as cur:
+        return (await cur.fetchone())[0]
+
+
+async def paid_since(since: datetime) -> list[dict]:
+    """Зараховані оплати після `since` — для виручки. Час — applied_at (коли гроші дійшли),
+    сума — amount_kop із платежу (ціна в YAML могла змінитися відтоді)."""
+    async with _db.execute(
+        "SELECT plan_id, amount_kop, applied_at FROM payments "
+        "WHERE status = 'success' AND applied_at IS NOT NULL AND applied_at >= ?",
+        (_iso(since),),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def user_payments(user_id: int, limit: int = 5) -> list[dict]:
+    async with _db.execute("SELECT * FROM payments WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                           (user_id, limit)) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def user_admin_actions(user_id: int, limit: int = 5) -> list[dict]:
+    async with _db.execute("SELECT * FROM admin_actions WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                           (user_id, limit)) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def has_join_request(user_id: int) -> bool:
+    return await count("SELECT COUNT(*) FROM join_requests WHERE user_id = ?", (user_id,)) > 0
+
+
+async def grant(user_id: int, plan_id: str, duration: timedelta, admin_id: int,
+                now: datetime) -> Subscription:
+    """/grant: продовжити доступ БЕЗ оплати (готівка, переказ на картку, подарунок, компенсація).
+
+    Правило те саме, що для оплати (new_expiry): діє → додаємо до кінця, минула → від зараз.
+    Продовження і запис у журнал — ОДНА транзакція: не буде доступу «без сліду» і сліду без доступу.
+    """
+    async with _write_lock:
+        try:
+            current = await get_subscription(user_id)
+            expires = new_expiry(current.expires_at if current else None, now, duration)
+            await _db.execute(
+                """INSERT INTO subscriptions (user_id, plan_id, expires_at, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       plan_id = excluded.plan_id, expires_at = excluded.expires_at,
+                       reminders_sent = 0, expiry_notified = 0, removed = 0,
+                       updated_at = excluded.updated_at""",
+                (user_id, plan_id, _iso(expires), _iso(now)),
+            )
+            await _db.execute(
+                "INSERT INTO admin_actions (admin_id, action, user_id, details, created_at) "
+                "VALUES (?, 'grant', ?, ?, ?)",
+                (admin_id, user_id, f"+{duration.days} дн., тариф {plan_id}, до {_iso(expires)}", _iso(now)),
+            )
+            await _db.commit()
+        except Exception:
+            await _db.rollback()
+            raise
+    return await get_subscription(user_id)
+
+
+async def revoke(user_id: int, admin_id: int, now: datetime) -> Subscription | None:
+    """/revoke: закрити доступ ЗАРАЗ (повернення коштів, порушення правил).
+
+    removed = 1 одразу, без пільгового періоду: has_access стає False в ту ж мить — заявку не
+    схвалимо, «Моя підписка» покаже ⛔️. expires_at = зараз (якщо вже минула — лишаємо стару дату).
+    Висячу заявку прибираємо. Повертає підписку ДО змін (щоб знати, чи був доступ).
+    """
+    async with _write_lock:
+        try:
+            before = await get_subscription(user_id)
+            await _db.execute(
+                "UPDATE subscriptions SET expires_at = MIN(expires_at, ?), removed = 1, expiry_notified = 1, "
+                "updated_at = ? WHERE user_id = ?",
+                (_iso(now), _iso(now), user_id),
+            )
+            await _db.execute("DELETE FROM join_requests WHERE user_id = ?", (user_id,))
+            await _db.execute(
+                "INSERT INTO admin_actions (admin_id, action, user_id, details, created_at) "
+                "VALUES (?, 'revoke', ?, ?, ?)",
+                (admin_id, user_id, f"було до {_iso(before.expires_at)}" if before else "підписки не було",
+                 _iso(now)),
+            )
+            await _db.commit()
+        except Exception:
+            await _db.rollback()
+            raise
+    return before
+
 
 # ---------- налаштування (крок 5) ----------
 

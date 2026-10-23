@@ -103,6 +103,7 @@ def test_valid_success_webhook_gives_access_and_notifies():
     sent = w.session.sent()
     assert len(sent) == 1 and sent[0].chat_id == USER.id and "Оплату отримано" in sent[0].text
     assert sent[0].reply_markup.inline_keyboard[0][0].url == ACCESS.invite_link   # і одразу — як зайти в канал
+    assert len(w.session.admin()) == 1 and "💰" in w.session.admin()[0].text      # і власниця знає (крок 7)
 
 
 def test_same_webhook_three_times_counts_once():
@@ -116,7 +117,7 @@ def test_same_webhook_three_times_counts_once():
 
     sub = w.run(script)
     assert sub.expires_at - utcnow() <= timedelta(days=30)
-    assert len(w.session.sent()) == 1
+    assert len(w.session.sent()) == 1 and len(w.session.admin()) == 1   # і власниці — теж один раз
 
 
 def test_forged_signature_rejected_and_nothing_changes():

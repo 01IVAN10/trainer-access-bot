@@ -68,3 +68,28 @@ async def grant_after_payment(bot: Bot, access: ChannelAccess, user_id: int) -> 
     except TelegramAPIError as e:
         log.warning("Не вдалося перевірити, чи user=%s у каналі: %s", user_id, e)
     return Granted.LINK
+
+
+class Kick(Enum):
+    KICKED = "kicked"          # був у каналі — прибрали
+    NOT_MEMBER = "not_member"  # у каналі вже немає (вийшла сама) — робити нічого
+    PROTECTED = "protected"    # власник або адмін каналу — не чіпаємо (і Telegram не дасть)
+
+
+async def kick(bot: Bot, access: ChannelAccess, user_id: int) -> Kick:
+    """Прибрати людину з каналу так, щоб вона МОГЛА повернутися після оплати.
+
+    ban + ОДРАЗУ unban: просто ban тримає людину в «Видалених» назавжди, і вона не зайде навіть
+    із підпискою. unban з only_if_banned=True — щоб випадково не вигнати учасника.
+    Помилку Telegram (TelegramAPIError) НЕ ловимо: що з нею робити, вирішує той, хто викликав
+    (планувальник — тихо спробує ще; адмін-команда — скаже людині в адмін-групі).
+    Спільна для планувальника (крок 6) і /revoke (крок 7).
+    """
+    member = await bot.get_chat_member(access.channel_id, user_id)
+    if member.status in (ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR):
+        return Kick.PROTECTED
+    if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED):
+        await bot.ban_chat_member(access.channel_id, user_id)
+        await bot.unban_chat_member(access.channel_id, user_id, only_if_banned=True)
+        return Kick.KICKED
+    return Kick.NOT_MEMBER

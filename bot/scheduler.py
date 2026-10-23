@@ -21,13 +21,13 @@ import logging
 from datetime import datetime, timedelta
 
 from aiogram import Bot
-from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 
-from bot import db, texts
-from bot.access import ChannelAccess
+from bot import admin_texts, db, texts
+from bot.access import ChannelAccess, Kick, kick
 from bot.config import Config
 from bot.keyboards import channel_keyboard, choose_plan_keyboard, renew_keyboard
+from bot.notify import tell_admins
 from bot.plans import Plan, available_plans
 from bot.subscription import ActionKind, Subscription, decide, has_access, utcnow
 
@@ -78,24 +78,18 @@ async def _remove(bot: Bot, sub: Subscription, plans: dict[str, Plan], access: C
         return False  # за цю мить людина продовжила підписку (або інший прохід уже видалив)
 
     try:
-        member = await bot.get_chat_member(access.channel_id, sub.user_id)
-        if member.status in (ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR):
-            # Власника й адмінів не чіпаємо (і Telegram не дасть). Позначку лишаємо — щоб не пробувати щоразу.
-            log.info("REMOVE | user=%s — адмін/власник каналу, не видаляємо", sub.user_id)
-            return False
-        if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED):
-            # ban + ОДРАЗУ unban = «вигнати без вічного бану». Просто ban — і людина не
-            # зможе повернутися навіть після оплати (Telegram тримає її в «Видалених»).
-            await bot.ban_chat_member(access.channel_id, sub.user_id)
-            await bot.unban_chat_member(access.channel_id, sub.user_id, only_if_banned=True)
-            log.info("REMOVE | user=%s — видалено з каналу (підписка до %s)", sub.user_id, sub.expires_at)
-        else:
-            log.info("REMOVE | user=%s — у каналі вже немає (%s)", sub.user_id, member.status)
+        result = await kick(bot, access, sub.user_id)  # ban + одразу unban — див. bot/access.py
     except TelegramAPIError as e:
         # Telegram не відповів / тимчасова помилка → знімаємо позначку, спробуємо через 30 с.
         log.warning("REMOVE | user=%s — не вдалося (%s), повторю пізніше", sub.user_id, e)
         await db.release_removal(sub.user_id, sub.expires_at)
         return False
+    if result == Kick.PROTECTED:
+        # Власника й адмінів не чіпаємо (і Telegram не дасть). Позначку лишаємо — щоб не пробувати щоразу.
+        log.info("REMOVE | user=%s — адмін/власник каналу, не видаляємо", sub.user_id)
+        return False
+    log.info("REMOVE | user=%s — %s (підписка до %s)", sub.user_id,
+             "видалено з каналу" if result == Kick.KICKED else "у каналі вже немає", sub.expires_at)
 
     # Гонка «оплатив саме в мить видалення»: оплата встигла між нашою заявкою і баном.
     fresh = await db.get_subscription(sub.user_id)
@@ -104,6 +98,9 @@ async def _remove(bot: Bot, sub: Subscription, plans: dict[str, Plan], access: C
         await _say(bot, sub.user_id, texts.PAID_DURING_REMOVAL, channel_keyboard(access.invite_link, "link"))
         return True
     await _say(bot, sub.user_id, texts.REMOVED_TEXT, choose_plan_keyboard())
+    # Крок 7: власниці — хто не продовжив. Це не «шум»: тим, хто пішов, варто написати особисто.
+    await tell_admins(bot, config, admin_texts.removed_text(
+        await db.get_user(sub.user_id), sub, plans.get(sub.plan_id), result == Kick.KICKED, config.timezone))
     return True
 
 

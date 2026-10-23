@@ -17,28 +17,43 @@ from datetime import datetime
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 
-from bot import db, texts
+from bot import admin_texts, db, texts
 from bot.access import ChannelAccess, grant_after_payment
+from bot.config import Config
 from bot.keyboards import channel_keyboard
+from bot.notify import tell_admins
 from bot.plans import Plan
 from bot.subscription import Subscription
 
 log = logging.getLogger(__name__)
 
 
-async def record_status(payment_id: int, status: str, plans: dict[str, Plan],
-                        now: datetime) -> Subscription | None:
+async def record_status(payment_id: int, status: str, plans: dict[str, Plan], now: datetime,
+                        bot: Bot, config: Config) -> Subscription | None:
     """Записує статус і, якщо це success, зараховує платіж у підписку.
 
     Повертає підписку, ЯКЩО саме цей виклик її продовжив (тоді треба повідомити людину).
     None — нічого нового: ще не оплачено, або вже зараховано іншим шляхом.
+
+    Крок 7: сповіщення власниці — ТУТ, а не в кожному з трьох шляхів. Що однакове для всіх
+    шляхів, живе всередині спільної функції (не забудемо в одному з них); що різне — зовні
+    (кнопка редагує повідомлення, webhook і звірка надсилають нове — notify_paid).
+    І рівно один раз: сповіщаємо лише той виклик, чий apply_payment реально зарахував.
     """
     await db.set_payment_status(payment_id, status)  # остаточний статус не перезапишеться
     if status != "success":
         return None
+    payment = await db.get_payment(payment_id)
+    prev = await db.get_subscription(payment["user_id"])  # ДО зарахування: нова / продовження / повернення
     sub = await db.apply_payment(payment_id, plans, now)  # рівно один раз
     if sub is not None:
         log.info("PAID | payment=#%s | user=%s | до %s", payment_id, sub.user_id, sub.expires_at)
+        try:  # гроші вже зараховано — що б не сталося зі сповіщенням, людина має отримати доступ
+            kind = admin_texts.payment_kind(prev, plans.get(prev.plan_id) if prev else None, now)
+            await tell_admins(bot, config, admin_texts.paid_text(
+                await db.get_user(sub.user_id), sub, plans.get(sub.plan_id), payment, kind, config.timezone))
+        except Exception:
+            log.exception("Не вдалося сповістити адмінів про платіж #%s", payment_id)
     return sub
 
 

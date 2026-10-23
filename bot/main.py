@@ -7,6 +7,7 @@
   2) HTTP-сервер — приймає webhook від mono (bot/webhook.py);
   3) фонова звірка — раз на хвилину питає mono про незавершені платежі (bot/reconcile.py).
 Крок 5: доступ до каналу — посилання із заявками (bot/access.py, bot/handlers/join.py).
+Крок 6: планувальник (bot/scheduler.py) — 4-та фонова річ: нагадування, «закінчилась», видалення.
 """
 import asyncio
 import logging
@@ -25,6 +26,7 @@ from bot.checks import check_admin_chat, check_channel, check_mono
 from bot.config import load_config
 from bot.payments.mono import MonoProvider
 from bot.reconcile import reconcile_forever
+from bot.scheduler import run_forever as scheduler_forever
 from bot.webhook import WEBHOOK_PATH, build_web_app
 from bot.plans import load_plans
 
@@ -88,6 +90,7 @@ async def main() -> None:
         logging.info("HTTP-сервер: порт %s; webhook mono: %s", config.port,
                      config.webhook_url or f"вимкнено (локально: {WEBHOOK_PATH}, задай WEBHOOK_BASE_URL)")
         background.append(asyncio.create_task(reconcile_forever(bot, provider, plans, config, access)))
+        background.append(asyncio.create_task(scheduler_forever(bot, plans, config, access)))
         logging.info("Демо-режим: %s", "так" if config.demo_mode else "ні")
         # ВІДМІННІСТЬ від етапу 1: там ми викидали події, що прийшли, поки бот був вимкнений
         # (щоб AI не відповідав на старе пачкою). Тут так не можна: серед них можуть бути

@@ -16,11 +16,12 @@ from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.methods import (
-    AnswerCallbackQuery, ApproveChatJoinRequest, CreateChatInviteLink, EditMessageText, GetChatMember, GetMe,
-    SendMessage, TelegramMethod,
+    AnswerCallbackQuery, ApproveChatJoinRequest, BanChatMember, CreateChatInviteLink, EditMessageText, GetChatMember,
+    GetMe, SendMessage, TelegramMethod, UnbanChatMember,
 )
 from aiogram.types import (
-    CallbackQuery, Chat, ChatInviteLink, ChatJoinRequest, ChatMemberLeft, ChatMemberMember, Message, Update, User,
+    CallbackQuery, Chat, ChatInviteLink, ChatJoinRequest, ChatMemberBanned, ChatMemberLeft, ChatMemberMember,
+    ChatMemberOwner, Message, Update, User,
 )
 
 from bot.access import ChannelAccess
@@ -44,6 +45,11 @@ class FakeSession(BaseSession):
         self.in_channel: set[int] = set()   # хто «вже в каналі» (для getChatMember)
         self.approve_fails = False          # «заявку вже скасували» → approve падає
         self.cannot_message: set[int] = set()  # кому бот НЕ може писати (не натискав /start)
+        self.owners: set[int] = set()          # власник каналу (Telegram не дасть його видалити)
+        self.banned: set[int] = set()          # «Видалені» (чорний список каналу)
+        self.ban_fails = False                 # Telegram тимчасово не відповідає
+        self.on_ban = None                     # гачок: «щось сталося саме в мить бану» (гонки)
+        self.explode_for: set[int] = set()     # несподівана помилка для цих людей (не TelegramAPIError)
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
@@ -61,8 +67,29 @@ class FakeSession(BaseSession):
                                   creates_join_request=bool(method.creates_join_request),
                                   is_primary=False, is_revoked=False)
         if isinstance(method, GetChatMember):
+            if method.user_id in self.explode_for:
+                raise RuntimeError("несподіванка")
             user = User(id=method.user_id, is_bot=False, first_name="x")
+            if method.user_id in self.owners:
+                return ChatMemberOwner(user=user, is_anonymous=False)
+            if method.user_id in self.banned:
+                return ChatMemberBanned(user=user, until_date=0)
             return ChatMemberMember(user=user) if method.user_id in self.in_channel else ChatMemberLeft(user=user)
+        if isinstance(method, BanChatMember):
+            if self.ban_fails:
+                raise TelegramBadRequest(method=method, message="Bad Request: try again later")
+            if method.user_id in self.owners:  # як справжній Telegram: власника не видалиш
+                raise TelegramBadRequest(method=method, message="Bad Request: can't remove chat owner")
+            if self.on_ban:
+                await self.on_ban()
+            self.in_channel.discard(method.user_id)
+            self.banned.add(method.user_id)
+            return True
+        if isinstance(method, UnbanChatMember):
+            if method.only_if_banned is not True:  # без цього unban вигнав би й учасника — бот так не робить
+                raise AssertionError("unban_chat_member має бути з only_if_banned=True")
+            self.banned.discard(method.user_id)
+            return True
         if isinstance(method, ApproveChatJoinRequest):
             if self.approve_fails:
                 raise TelegramBadRequest(method=method, message="Bad Request: HIDE_REQUESTER_MISSING")

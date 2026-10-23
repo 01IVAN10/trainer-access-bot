@@ -24,8 +24,12 @@ def test_format_left():
     assert format_left(timedelta(days=29, hours=3, minutes=12)) == "29 дн. 3 год"
     assert format_left(timedelta(days=2)) == "2 дн."
     assert format_left(timedelta(hours=5, minutes=12)) == "5 год 12 хв"
-    assert format_left(timedelta(minutes=3, seconds=40)) == "3 хв"
-    assert format_left(timedelta(seconds=30)) == "менше хвилини"
+    # округлення до найближчої хвилини (планувальник запізнюється до 30 с — див. test_scheduler)
+    assert format_left(timedelta(minutes=3, seconds=40)) == "4 хв"
+    assert format_left(timedelta(minutes=3, seconds=20)) == "3 хв"
+    assert format_left(timedelta(seconds=40)) == "1 хв"
+    assert format_left(timedelta(seconds=29)) == "менше хвилини"
+    assert format_left(timedelta(days=2, hours=23, minutes=59, seconds=40)) == "3 дн."
 
 
 def test_no_subscription():

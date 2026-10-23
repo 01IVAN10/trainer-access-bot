@@ -28,13 +28,18 @@ def _tz_note(tz: str) -> str:
 
 
 def format_left(td: timedelta) -> str:
-    """Скільки лишилось — без зайвої точності: '29 дн. 3 год', '5 год 12 хв', '3 хв'."""
+    """Скільки лишилось — без зайвої точності: '29 дн. 3 год', '5 год 12 хв', '3 хв'.
+
+    Округлюємо до НАЙБЛИЖЧОЇ хвилини, а не відкидаємо секунди: планувальник прокидається
+    раз на 30 с, тож нагадування «за 2 хв» реально йде за 1 хв 35 с. Відкинути секунди →
+    «через 1 хв» (і людина думає, що бот сплутав). Округлити → «через 2 хв», як люди й кажуть.
+    """
     seconds = int(td.total_seconds())
-    if seconds < 60:
+    if seconds < 30:
         return "менше хвилини"
-    days, rest = divmod(seconds, 86400)
-    hours, rest = divmod(rest, 3600)
-    minutes = rest // 60
+    total_minutes = (seconds + 30) // 60   # 1 хв 35 с → 2 хв; 2 дн. 23 год 59 хв 40 с → 3 дн.
+    days, rest = divmod(total_minutes, 1440)
+    hours, minutes = divmod(rest, 60)
     if days:
         return f"{days} дн. {hours} год" if hours else f"{days} дн."
     if hours:
@@ -187,3 +192,29 @@ PAYMENT_FAILED = ("❌ <b>Оплата не пройшла.</b>\n\n"
 PAYMENT_EXPIRED = "⌛ <b>Час на оплату цього рахунку минув.</b>\n\nСтворіть новий — це займе секунду."
 PAYMENT_PROVIDER_DOWN = ("😕 Не вдалося зв'язатися з банком. Спробуйте за хвилину.\n"
                          "Якщо повторюється — /paysupport")
+
+
+# ---------- планувальник (крок 6) ----------
+# Кожне повідомлення каже, ЩО буде далі і ЩО зробити — а не просто «підписка закінчується».
+
+def reminder_text(plan: Plan | None, sub: Subscription, now: datetime, tz: str) -> str:
+    title = escape(plan.title) if plan else sub.plan_id
+    return (f"⏰ <b>Підписка закінчується через {format_left(sub.expires_at - now)}</b>\n\n"
+            f"Тариф: {title}\n"
+            f"Діє до: {format_date(sub.expires_at, tz)}{_tz_note(tz)}\n\n"
+            "Продовжіть зараз — дні, що лишились, не згорять.")
+
+
+def expired_grace_text(plan: Plan | None, sub: Subscription, now: datetime, tz: str) -> str:
+    grace = plan.grace if plan else timedelta(0)
+    return (f"⚠️ <b>Підписка закінчилась</b> {format_date(sub.expires_at, tz)}\n\n"
+            f"Доступ до каналу збережеться ще {format_left(sub.expires_at + grace - now)}, "
+            "потім я його закрию. Продовжіть — і нічого не зміниться.")
+
+
+REMOVED_TEXT = ("⛔️ <b>Підписка закінчилась — доступ до каналу закрито.</b>\n\n"
+                "Захочете повернутися — оформіть тариф, і я впущу вас знову. "
+                "Усі матеріали каналу на місці 💪")
+
+PAID_DURING_REMOVAL = ("✅ Ви продовжили підписку саме в ту мить, коли я закривав доступ. "
+                       "Вибачте за незручність — ось посилання, заходьте знову:")

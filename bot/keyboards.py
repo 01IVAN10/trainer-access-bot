@@ -61,6 +61,20 @@ def choose_plan_keyboard(text: str = "💳 Обрати тариф", channel_lin
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def renew_keyboard(plan: Plan | None) -> InlineKeyboardMarkup:
+    """Під нагадуванням: продовжити ТОЙ САМИЙ тариф одним натисканням (+ інші тарифи).
+
+    Один дотик замість «Тарифи → обрати → Оплатити» — менше кроків, більше продовжень.
+    plan = None (тариф прибрали або він зараз недоступний) → лише список тарифів.
+    """
+    rows = []
+    if plan is not None:
+        rows.append([InlineKeyboardButton(text=f"🔄 Продовжити «{plan.title}» — {plan.price_uah} грн",
+                                          callback_data=PlanCb(action="buy", plan_id=plan.id).pack())])
+    rows.append([InlineKeyboardButton(text="💳 Усі тарифи", callback_data=PlanCb(action="list").pack())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 START_PLANS = "plans"  # /start plans — відкрити бота одразу з тарифами
 
 

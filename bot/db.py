@@ -336,6 +336,57 @@ async def apply_payment(payment_id: int, plans: dict[str, Plan], now: datetime) 
 
 
 
+
+# ---------- планувальник (крок 6) ----------
+#
+# Кожна дія планувальника — «спершу ЗАЯВИ в базі, потім ДІЙ» (claim). Умова WHERE містить
+# expires_at, який планувальник бачив, коли вирішував. Якщо за цю мить людина продовжила
+# підписку, expires_at уже інший → rowcount = 0 → планувальник НЕ надішле застаріле
+# нагадування і НЕ видалить людину, яка щойно заплатила.
+
+async def subscriptions_due(now: datetime, horizon: timedelta) -> list[Subscription]:
+    """Невидалені підписки, яким скоро щось знадобиться: закінчуються в межах horizon
+    (найдовше нагадування) або вже закінчились. Решту (до кінця місяць) не перебираємо."""
+    async with _db.execute(
+        "SELECT * FROM subscriptions WHERE removed = 0 AND expires_at <= ? ORDER BY expires_at",
+        (_iso(now + horizon),),
+    ) as cur:
+        return [_row_to_sub(r) for r in await cur.fetchall()]
+
+
+async def _claim(sql: str, params: tuple) -> bool:
+    async with _write_lock:
+        cur = await _db.execute(sql, params)
+        await _db.commit()
+    return cur.rowcount == 1
+
+
+async def claim_reminder(user_id: int, expires_at: datetime, count: int) -> bool:
+    return await _claim(
+        "UPDATE subscriptions SET reminders_sent = ? "
+        "WHERE user_id = ? AND expires_at = ? AND removed = 0 AND reminders_sent < ?",
+        (count, user_id, _iso(expires_at), count))
+
+
+async def claim_expiry_notice(user_id: int, expires_at: datetime) -> bool:
+    return await _claim(
+        "UPDATE subscriptions SET expiry_notified = 1 "
+        "WHERE user_id = ? AND expires_at = ? AND removed = 0 AND expiry_notified = 0",
+        (user_id, _iso(expires_at)))
+
+
+async def claim_removal(user_id: int, expires_at: datetime) -> bool:
+    return await _claim(
+        "UPDATE subscriptions SET removed = 1 WHERE user_id = ? AND expires_at = ? AND removed = 0",
+        (user_id, _iso(expires_at)))
+
+
+async def release_removal(user_id: int, expires_at: datetime) -> None:
+    """Видалити з каналу не вдалося (збій Telegram) — знімаємо позначку, наступний прохід спробує ще."""
+    await _claim(
+        "UPDATE subscriptions SET removed = 0 WHERE user_id = ? AND expires_at = ? AND removed = 1",
+        (user_id, _iso(expires_at)))
+
 # ---------- налаштування (крок 5) ----------
 
 async def get_setting(key: str) -> str | None:

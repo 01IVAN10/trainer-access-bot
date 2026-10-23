@@ -6,7 +6,7 @@
   1) polling — бот отримує повідомлення з Telegram;
   2) HTTP-сервер — приймає webhook від mono (bot/webhook.py);
   3) фонова звірка — раз на хвилину питає mono про незавершені платежі (bot/reconcile.py).
-Видача доступу до каналу — крок 5.
+Крок 5: доступ до каналу — посилання із заявками (bot/access.py, bot/handlers/join.py).
 """
 import asyncio
 import logging
@@ -19,6 +19,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from bot import db
+from bot.access import ensure_invite_link
 from bot.app import build_dispatcher
 from bot.checks import check_admin_chat, check_channel, check_mono
 from bot.config import load_config
@@ -75,15 +76,18 @@ async def main() -> None:
         await run_checks(bot, config)
         await db.init(config.db_path)
         await bot.set_my_commands(COMMANDS)
+        # Посилання на канал із заявками — бот створює його сам (один раз, потім бере з бази).
+        access = await ensure_invite_link(bot, config.channel_id)
+        dp["access"] = access
 
         # HTTP-сервер для webhook. Слухаємо 0.0.0.0 (усі адреси), щоб достукались ззовні
         # (тунель на Mac, Railway). Запускаємо завжди: GET / — перевірка «бот живий».
-        runner = web.AppRunner(build_web_app(bot, provider, plans, config), access_log=None)
+        runner = web.AppRunner(build_web_app(bot, provider, plans, config, access), access_log=None)
         await runner.setup()
         await web.TCPSite(runner, host="0.0.0.0", port=config.port).start()
         logging.info("HTTP-сервер: порт %s; webhook mono: %s", config.port,
                      config.webhook_url or f"вимкнено (локально: {WEBHOOK_PATH}, задай WEBHOOK_BASE_URL)")
-        background.append(asyncio.create_task(reconcile_forever(bot, provider, plans, config)))
+        background.append(asyncio.create_task(reconcile_forever(bot, provider, plans, config, access)))
         logging.info("Демо-режим: %s", "так" if config.demo_mode else "ні")
         # ВІДМІННІСТЬ від етапу 1: там ми викидали події, що прийшли, поки бот був вимкнений
         # (щоб AI не відповідав на старе пачкою). Тут так не можна: серед них можуть бути

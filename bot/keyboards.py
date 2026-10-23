@@ -52,11 +52,35 @@ def plan_card_keyboard(plan: Plan) -> InlineKeyboardMarkup:
     ])
 
 
-def choose_plan_keyboard(text: str = "💳 Обрати тариф") -> InlineKeyboardMarkup:
-    """Кнопка під «Моя підписка»: веде до списку тарифів."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=text, callback_data=PlanCb(action="list").pack())],
-    ])
+def choose_plan_keyboard(text: str = "💳 Обрати тариф", channel_link: str | None = None) -> InlineKeyboardMarkup:
+    """Кнопки під «Моя підписка»: (посилання на канал, якщо доступ є) + до тарифів."""
+    rows = []
+    if channel_link:
+        rows.append([InlineKeyboardButton(text="🔑 Посилання на канал", url=channel_link)])
+    rows.append([InlineKeyboardButton(text=text, callback_data=PlanCb(action="list").pack())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+START_PLANS = "plans"  # /start plans — відкрити бота одразу з тарифами
+
+
+def start_bot_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+    """Для людини, яка ще НЕ запускала бота (прийшла через заявку в канал).
+
+    Не callback-кнопка, а ПОСИЛАННЯ в бот: t.me/<бот>?start=plans. Telegram відкриє чат
+    з ботом і кнопкою «Start». Поки людина її не натисне, бот не може писати їй нових
+    повідомлень (лише у відповідь на заявку — 5 хв і доки заявку не оброблено). А нам
+    писати ще доведеться: «оплату отримано», нагадування, «підписка закінчилась».
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="💳 Обрати тариф", url=f"https://t.me/{bot_username}?start={START_PLANS}")]])
+
+
+def channel_keyboard(channel_link: str, granted: str) -> InlineKeyboardMarkup:
+    """Після оплати. Те саме посилання і для нових, і для тих, хто вже в каналі:
+    учасникові Telegram просто відкриє канал, новому — запропонує подати заявку."""
+    text = "🔑 Вступити в канал" if granted == "link" else "📢 Відкрити канал"
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text, url=channel_link)]])
 
 
 class PayCb(CallbackData, prefix="pay"):

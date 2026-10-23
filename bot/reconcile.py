@@ -14,6 +14,7 @@ import logging
 from aiogram import Bot
 
 from bot import billing, db
+from bot.access import ChannelAccess
 from bot.config import Config
 from bot.payments import PaymentError, PaymentProvider
 from bot.plans import Plan
@@ -24,7 +25,8 @@ log = logging.getLogger(__name__)
 INTERVAL_SECONDS = 60
 
 
-async def reconcile_once(bot: Bot, provider: PaymentProvider, plans: dict[str, Plan], config: Config) -> int:
+async def reconcile_once(bot: Bot, provider: PaymentProvider, plans: dict[str, Plan], config: Config,
+                         access: ChannelAccess) -> int:
     """Один прохід. Повертає, скільки платежів саме зараз зараховано."""
     applied = 0
     for payment in await db.pending_payments(utcnow()):
@@ -38,14 +40,15 @@ async def reconcile_once(bot: Bot, provider: PaymentProvider, plans: dict[str, P
         if sub is not None:
             applied += 1
             log.info("Звірка: платіж #%s зараховано (webhook не дійшов або вимкнений)", payment["id"])
-            await billing.notify_paid(bot, sub, plans, config.timezone)
+            await billing.notify_paid(bot, sub, plans, config.timezone, access)
     return applied
 
 
-async def reconcile_forever(bot: Bot, provider: PaymentProvider, plans: dict[str, Plan], config: Config) -> None:
+async def reconcile_forever(bot: Bot, provider: PaymentProvider, plans: dict[str, Plan], config: Config,
+                            access: ChannelAccess) -> None:
     while True:
         try:
-            await reconcile_once(bot, provider, plans, config)
+            await reconcile_once(bot, provider, plans, config, access)
         except Exception:
             # Будь-яка несподіванка не має вбити цикл назавжди — інакше звірка тихо зупиниться.
             log.exception("Звірка: несподівана помилка")

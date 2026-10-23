@@ -7,7 +7,7 @@ from bot.plans import load_plans
 from bot.reconcile import reconcile_once
 from bot.subscription import utcnow
 from tests.fake_payments import FakeProvider
-from tests.fake_telegram import USER, make_bot, make_config
+from tests.fake_telegram import ACCESS, USER, make_bot, make_config
 
 PLANS = load_plans()
 
@@ -24,7 +24,7 @@ def run(script, created_ago: timedelta = timedelta(minutes=5)):
             pid = await db.create_payment(USER.id, PLANS["month"], created)
             invoice = await bank.create_invoice(amount_kop=49000)
             await db.set_invoice(pid, invoice.invoice_id, invoice.page_url, created + timedelta(minutes=30))
-            result = await script(lambda: reconcile_once(bot, bank, PLANS, make_config()), bank)
+            result = await script(lambda: reconcile_once(bot, bank, PLANS, make_config(), ACCESS), bank)
             return session, result
         finally:
             await db.close()

@@ -21,7 +21,7 @@ from bot.payments.mono import PUBKEY_REFRESH_INTERVAL, MonoProvider
 from bot.plans import load_plans
 from bot.subscription import utcnow
 from bot.webhook import WEBHOOK_PATH, build_web_app
-from tests.fake_telegram import USER, make_bot, make_config
+from tests.fake_telegram import ACCESS, USER, make_bot, make_config
 
 PLANS = load_plans()
 
@@ -68,7 +68,7 @@ class World:
             await mono.start_server()
             self.provider = MonoProvider("T", base_url=str(mono.make_url("")))
             self.bot, self.session = make_bot()
-            client = TestClient(TestServer(build_web_app(self.bot, self.provider, PLANS, make_config())))
+            client = TestClient(TestServer(build_web_app(self.bot, self.provider, PLANS, make_config(), ACCESS)))
             await client.start_server()
             try:
                 await db.upsert_user(USER.id, USER.username, USER.first_name)
@@ -102,6 +102,7 @@ def test_valid_success_webhook_gives_access_and_notifies():
     assert status == 200 and payment["status"] == "success" and sub is not None
     sent = w.session.sent()
     assert len(sent) == 1 and sent[0].chat_id == USER.id and "Оплату отримано" in sent[0].text
+    assert sent[0].reply_markup.inline_keyboard[0][0].url == ACCESS.invite_link   # і одразу — як зайти в канал
 
 
 def test_same_webhook_three_times_counts_once():

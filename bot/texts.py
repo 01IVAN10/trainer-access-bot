@@ -147,12 +147,37 @@ def invoice_text(plan: Plan, amount_kop: int, valid_until: datetime, tz: str, de
     return "\n".join(lines)
 
 
-def payment_success_text(plan: Plan | None, sub: Subscription, tz: str) -> str:
+# Що сказати після оплати — залежить від того, чи людина вже в каналі (bot/access.py → Granted).
+_ACCESS_NOTE = {
+    "approved": "🎉 Вашу заявку в канал схвалено — ви вже всередині!",
+    # Не «продовжено»: сюди потрапляє і перша оплата, якщо інший шлях (звірка, webhook) уже
+    # встиг схвалити заявку. Текст має бути правдивим в обох випадках.
+    "member": "Ви вже в каналі — доступ активний 💪",
+    "link": ("Натисніть <b>«🔑 Вступити в канал»</b> і подайте заявку — "
+             "я схвалю її автоматично за кілька секунд."),
+}
+
+
+def payment_success_text(plan: Plan | None, sub: Subscription, tz: str, granted: str = "link") -> str:
     title = escape(plan.title) if plan else sub.plan_id
     return (f"✅ <b>Оплату отримано!</b>\n\n"
             f"Тариф: {title}\n"
             f"Доступ діє до: <b>{format_date(sub.expires_at, tz)}</b>{_tz_note(tz)}\n\n"
-            "<i>🛠 Посилання на канал бот видаватиме з наступного кроку розробки.</i>")
+            f"{_ACCESS_NOTE[granted]}")
+
+
+# ---------- заявки на вступ (крок 5) ----------
+
+JOIN_APPROVED = f"✅ Заявку схвалено — ласкаво просимо в «{BUSINESS_NAME}»! 💪"
+
+
+def join_needs_subscription(demo_mode: bool) -> str:
+    text = (f"👋 Бачу вашу заявку в канал «{BUSINESS_NAME}».\n\n"
+            "Щоб я її схвалив, потрібна активна підписка. Оберіть тариф — "
+            "одразу після оплати впущу вас автоматично, заявку подавати вдруге не треба.")
+    if demo_mode:
+        text += "\n\n<i>🧪 Демо: спробуйте тариф «Демо — 5 хвилин», оплата тестова.</i>"
+    return text
 
 
 PAYMENT_PENDING = ("⏳ Оплату ще не отримано.\n\n"

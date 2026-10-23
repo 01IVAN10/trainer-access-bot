@@ -18,10 +18,11 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from bot import billing, db, texts
+from bot.access import ChannelAccess, grant_after_payment
 from bot.config import Config
 from bot.handlers.common import edit
 from bot.handlers.plans import find_plan, unavailable
-from bot.keyboards import PayCb, PlanCb, invoice_keyboard, retry_keyboard
+from bot.keyboards import PayCb, PlanCb, channel_keyboard, invoice_keyboard, retry_keyboard
 from bot.payments import PaymentError, PaymentProvider
 from bot.plans import Plan
 from bot.subscription import purchase_blocker, utcnow
@@ -85,7 +86,7 @@ async def cb_buy(callback: CallbackQuery, callback_data: PlanCb, config: Config,
 
 @router.callback_query(PayCb.filter(F.action == "check"))
 async def cb_check(callback: CallbackQuery, callback_data: PayCb, config: Config,
-                   plans: dict[str, Plan], provider: PaymentProvider) -> None:
+                   plans: dict[str, Plan], provider: PaymentProvider, access: ChannelAccess) -> None:
     payment = await db.get_payment(callback_data.payment_id)
     # Чужий або вигаданий номер платежу — відповідаємо однаково, нічого не розкриваючи.
     if payment is None or payment["user_id"] != callback.from_user.id:
@@ -110,7 +111,9 @@ async def cb_check(callback: CallbackQuery, callback_data: PayCb, config: Config
 
     if status == "success":
         sub = newly or await db.get_subscription(payment["user_id"])
-        await edit(callback, texts.payment_success_text(plan, sub, config.timezone))  # без кнопок
+        granted = await grant_after_payment(callback.bot, access, payment["user_id"])
+        await edit(callback, texts.payment_success_text(plan, sub, config.timezone, granted.value),
+                   channel_keyboard(access.invite_link, granted.value))
         await callback.answer("Оплату отримано ✅")
     elif status in ("created", "processing"):
         await callback.answer(texts.PAYMENT_PENDING, show_alert=True)

@@ -11,7 +11,7 @@ from bot.plans import load_plans
 from bot.subscription import Subscription, utcnow
 from tests.fake_payments import FakeProvider
 from tests.fake_telegram import (
-    get_dispatcher,
+    INVITE_LINK,    get_dispatcher,
     ADMIN_GROUP, USER, buttons, callback_update, make_bot, make_config, text_update,
 )
 
@@ -124,7 +124,16 @@ def test_my_subscription_active_offers_renewal():
     month = Subscription(user_id=USER.id, plan_id="month", expires_at=utcnow() + timedelta(days=10))
     s = scenario([text_update(BTN_MY)], subscription=month)
     assert "активна" in s.sent()[0].text and "за київським часом" in s.sent()[0].text
-    assert buttons(s.sent()[0]) == ["🔄 Продовжити"]
+    # Людина загубила повідомлення після оплати — посилання на канал завжди тут.
+    assert buttons(s.sent()[0]) == ["🔑 Посилання на канал", "🔄 Продовжити"]
+    assert s.sent()[0].reply_markup.inline_keyboard[0][0].url == INVITE_LINK
+
+
+def test_my_subscription_expired_no_channel_link():
+    """Підписка минула (і пільговий період теж) — посилання на канал НЕ даємо."""
+    old = Subscription(user_id=USER.id, plan_id="month", expires_at=utcnow() - timedelta(days=5))
+    s = scenario([text_update(BTN_MY)], subscription=old)
+    assert buttons(s.sent()[0]) == ["💳 Обрати тариф"]
 
 
 def test_help_and_paysupport_show_contact():

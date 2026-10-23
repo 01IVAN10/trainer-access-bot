@@ -6,20 +6,26 @@ config і plans хендлер отримує ПАРАМЕТРАМИ: main.py к
 тут хендлер не залежить від .env — його можна викликати в тесті з будь-яким конфігом.
 """
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 
 from bot import texts
 from bot.config import Config
-from bot.keyboards import BTN_HELP, main_menu
+from bot.keyboards import BTN_HELP, START_PLANS, main_menu, plans_keyboard
+from bot.plans import Plan, available_plans
 
 router = Router(name="start")
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, config: Config) -> None:
+async def cmd_start(message: Message, command: CommandObject, config: Config, plans: dict[str, Plan]) -> None:
     await message.answer(texts.start_text(message.from_user.first_name, config.demo_mode),
                          reply_markup=main_menu)
+    # /start plans — людина прийшла з посилання в повідомленні про заявку в канал:
+    # одразу показуємо тарифи, щоб не шукала їх у меню.
+    if command.args == START_PLANS:
+        visible = available_plans(plans, config.demo_mode)
+        await message.answer(texts.plans_text(visible), reply_markup=plans_keyboard(visible))
 
 
 @router.message(Command("help"))

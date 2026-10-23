@@ -136,3 +136,14 @@ def purchase_blocker(plan: Plan, sub: Subscription | None, sub_plan: Plan | None
     if get_status(sub.expires_at, sub_plan.grace, now) in (Status.ACTIVE, Status.GRACE):
         return "У вас уже є оплачена підписка 🙂 Демо-тариф — для тих, хто ще не підписаний."
     return None
+
+
+def has_access(sub: Subscription | None, plan: Plan | None, now: datetime) -> bool:
+    """Чи пускати людину в канал ЗАРАЗ. Активна підписка або пільговий період — так.
+
+    Тариф могли прибрати з plans.yaml — тоді пільгового періоду немає (але й не падаємо).
+    """
+    if sub is None or sub.removed:
+        return False
+    grace = plan.grace if plan else timedelta(0)
+    return get_status(sub.expires_at, grace, now) in (Status.ACTIVE, Status.GRACE)

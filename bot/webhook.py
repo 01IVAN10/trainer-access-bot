@@ -21,6 +21,7 @@ from aiohttp import web
 from aiogram import Bot
 
 from bot import billing, db
+from bot.access import ChannelAccess
 from bot.config import Config
 from bot.payments import PaymentError, PaymentProvider, WebhookRejected
 from bot.plans import Plan
@@ -30,7 +31,7 @@ log = logging.getLogger(__name__)
 
 WEBHOOK_PATH = "/webhooks/mono"
 # Ключі для зберігання залежностей у web.Application (так aiohttp радить замість рядків).
-BOT, PROVIDER, PLANS, CONFIG = (web.AppKey(n) for n in ("bot", "provider", "plans", "config"))
+BOT, PROVIDER, PLANS, CONFIG, ACCESS = (web.AppKey(n) for n in ("bot", "provider", "plans", "config", "access"))
 
 
 async def health(request: web.Request) -> web.Response:
@@ -70,13 +71,15 @@ async def mono_webhook(request: web.Request) -> web.Response:
         return web.Response(status=503, text="try later")  # mono повторить
     log.info("WEBHOOK: платіж #%s → %s", payment["id"], event.status)
     if sub is not None:  # саме цей webhook продовжив підписку → кажемо людині
-        await billing.notify_paid(request.app[BOT], sub, request.app[PLANS], request.app[CONFIG].timezone)
+        await billing.notify_paid(request.app[BOT], sub, request.app[PLANS], request.app[CONFIG].timezone,
+                                  request.app[ACCESS])
     return web.Response(text="ok")
 
 
-def build_web_app(bot: Bot, provider: PaymentProvider, plans: dict[str, Plan], config: Config) -> web.Application:
+def build_web_app(bot: Bot, provider: PaymentProvider, plans: dict[str, Plan], config: Config,
+                  access: ChannelAccess) -> web.Application:
     app = web.Application(client_max_size=64 * 1024)  # webhook mono — кілька КБ; більше не приймаємо
-    app[BOT], app[PROVIDER], app[PLANS], app[CONFIG] = bot, provider, plans, config
+    app[BOT], app[PROVIDER], app[PLANS], app[CONFIG], app[ACCESS] = bot, provider, plans, config, access
     app.router.add_get("/", health)
     app.router.add_post(WEBHOOK_PATH, mono_webhook)
     return app

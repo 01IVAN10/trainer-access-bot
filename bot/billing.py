@@ -15,9 +15,11 @@ import logging
 from datetime import datetime
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 
 from bot import db, texts
+from bot.access import ChannelAccess, grant_after_payment
+from bot.keyboards import channel_keyboard
 from bot.plans import Plan
 from bot.subscription import Subscription
 
@@ -40,11 +42,21 @@ async def record_status(payment_id: int, status: str, plans: dict[str, Plan],
     return sub
 
 
-async def notify_paid(bot: Bot, sub: Subscription, plans: dict[str, Plan], tz: str) -> None:
-    """Повідомити людину, що оплату зараховано (для webhook і звірки — коли людина
-    нічого не натискала). Помилка Telegram (людина заблокувала бота) НЕ має зламати
-    обробку платежу: гроші зараховано, підписка є — просто не змогли сказати."""
+async def notify_paid(bot: Bot, sub: Subscription, plans: dict[str, Plan], tz: str,
+                      access: ChannelAccess) -> None:
+    """Впустити в канал (якщо людина вже подавала заявку) і повідомити про оплату.
+    Для webhook і звірки — коли людина нічого не натискала.
+
+    Помилка Telegram (людина заблокувала бота) НЕ має зламати обробку платежу:
+    гроші зараховано, підписка є — просто не змогли сказати."""
     try:
-        await bot.send_message(sub.user_id, texts.payment_success_text(plans.get(sub.plan_id), sub, tz))
+        granted = await grant_after_payment(bot, access, sub.user_id)
+        await bot.send_message(sub.user_id,
+                               texts.payment_success_text(plans.get(sub.plan_id), sub, tz, granted.value),
+                               reply_markup=channel_keyboard(access.invite_link, granted.value))
+    except TelegramForbiddenError as e:
+        # Людина ніколи не натискала /start (або заблокувала бота). Доступ уже дано — це головне.
+        log.warning("Не вдалося повідомити user=%s про оплату (не запускав бота / заблокував): %s",
+                    sub.user_id, e)
     except TelegramAPIError as e:
         log.warning("Не вдалося повідомити user=%s про оплату: %s", sub.user_id, e)

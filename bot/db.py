@@ -91,6 +91,18 @@ MIGRATIONS = [
     ALTER TABLE payments ADD COLUMN page_url TEXT;
     ALTER TABLE payments ADD COLUMN valid_until TEXT;
     """,
+    # 3 (крок 5): налаштування, які бот створює сам (посилання на канал), і заявки на вступ,
+    # що «висять», бо людина ще не заплатила. Після оплати бот схвалить їх автоматично.
+    """
+    CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS join_requests (
+        user_id      INTEGER PRIMARY KEY,   -- одна висяча заявка на людину
+        requested_at TEXT NOT NULL
+    );
+    """,
 ]
 
 
@@ -322,6 +334,48 @@ async def apply_payment(payment_id: int, plans: dict[str, Plan], now: datetime) 
              payment_id, payment["user_id"], plan.id, _iso(expires))
     return await get_subscription(payment["user_id"])
 
+
+
+# ---------- налаштування (крок 5) ----------
+
+async def get_setting(key: str) -> str | None:
+    async with _db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cur:
+        row = await cur.fetchone()
+    return row["value"] if row else None
+
+
+async def set_setting(key: str, value: str) -> None:
+    async with _write_lock:
+        await _db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        await _db.commit()
+
+
+# ---------- висячі заявки на вступ (крок 5) ----------
+
+async def save_join_request(user_id: int, now: datetime) -> None:
+    async with _write_lock:
+        await _db.execute(
+            "INSERT INTO join_requests (user_id, requested_at) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET requested_at = excluded.requested_at",
+            (user_id, _iso(now)),
+        )
+        await _db.commit()
+
+
+async def pop_join_request(user_id: int) -> bool:
+    """Забрати висячу заявку. True — заявка БУЛА і саме цей виклик її забрав.
+
+    Той самий прийом, що з платежами: DELETE + rowcount. Якщо webhook і звірка
+    одночасно зарахують оплату, схвалювати заявку піде лише один з них.
+    """
+    async with _write_lock:
+        cur = await _db.execute("DELETE FROM join_requests WHERE user_id = ?", (user_id,))
+        await _db.commit()
+    return cur.rowcount == 1
 
 if __name__ == "__main__":
     import asyncio

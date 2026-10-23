@@ -18,7 +18,10 @@ from dotenv import load_dotenv
 
 # Шукає .env у поточній папці. Якщо змінна вже задана в оточенні (як на сервері) —
 # .env її НЕ перезапише.
-load_dotenv()
+# ENV_FILE — інший файл замість .env (крок 9): перевірити налаштування PROD на Mac,
+# не чіпаючи DEV-шний .env і не вписуючи токени в термінал:
+#   ENV_FILE=.env.prod python -m tools.check_setup
+load_dotenv(os.getenv("ENV_FILE", ".env"))
 
 
 @dataclass(frozen=True)  # frozen = налаштування не можна випадково змінити під час роботи

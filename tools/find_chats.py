@@ -3,6 +3,7 @@
 
 Запуск:  python -m tools.find_chats
 Потрібен лише BOT_TOKEN у .env (CHANNEL_ID і ADMIN_CHAT_ID ще можуть бути порожні).
+Для PROD-бота:  ENV_FILE=.env.prod python -m tools.find_chats
 
 Як це працює: коли бота додають у канал чи групу, Telegram створює подію
 my_chat_member («статус бота в чаті змінився»). Telegram тримає непрочитані
@@ -22,7 +23,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramConflictError, TelegramMigrateToChat
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.getenv("ENV_FILE", ".env"))  # ENV_FILE=.env.prod — для PROD-бота (див. bot/config.py)
 
 KIND = {"channel": "📢 канал", "supergroup": "👥 супергрупа", "group": "👥 група (звич.)",
         "private": "👤 особистий"}

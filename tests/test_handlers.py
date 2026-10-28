@@ -167,3 +167,41 @@ def test_button_press_alone_saves_user():
         finally:
             await db.close()
     assert asyncio.run(run()) == 1
+
+
+# ---------- /demo (крок 10) ----------
+
+def _demo(**config_extra):
+    async def run():
+        await db.init(":memory:")
+        bot, session = make_bot()
+        try:
+            await DP.feed_update(bot, text_update("/demo"), config=make_config(**config_extra), plans=PLANS,
+                                 provider=FakeProvider())
+            return session.sent()
+        finally:
+            await db.close()
+    return asyncio.run(run())
+
+
+def test_demo_explains_what_to_press_and_what_to_expect():
+    msg = _demo()[0]
+    assert "4242 4242 4242 4242" in msg.text and "Вступити в канал" in msg.text
+    assert "6-й" in msg.text                                   # що бот прибере з каналу — і коли
+    assert "🎥" not in msg.text and "свого каналу" not in msg.text  # без відео й контакту — без цих рядків
+
+
+def test_demo_shows_video_and_contact_when_configured():
+    msg = _demo(demo_video_url="https://youtu.be/x", developer_contact="@dev")[0]
+    assert "https://youtu.be/x" in msg.text and "@dev" in msg.text
+
+
+def test_demo_hidden_outside_demo_mode():
+    """У боті реального клієнта /demo не існує — звичайна відповідь на незнайоме."""
+    msg = _demo(demo_mode=False)[0]
+    assert "4242" not in msg.text and "меню" in msg.text
+
+
+def test_start_points_to_demo():
+    s = scenario([text_update("/start")])
+    assert "/demo" in s.sent()[0].text

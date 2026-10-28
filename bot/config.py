@@ -38,6 +38,9 @@ class Config:
     # оплату підтверджують кнопка «Перевірити» і фонова звірка (так зручно локально на Mac).
     webhook_base_url: str = ""
     port: int = 8080       # на якому порту слухає HTTP-сервер бота (Railway задає PORT сам)
+    # Крок 10, лише для демо-портфоліо (/demo): відео з адмінкою і контакт розробника. Необов'язкові.
+    demo_video_url: str = ""
+    developer_contact: str = ""
 
     @property
     def webhook_url(self) -> str | None:
@@ -110,6 +113,8 @@ def load_config() -> Config:
         db_path=os.getenv("DB_PATH", "storage/bot.db"),
         webhook_base_url=os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/"),
         port=_optional_port(),
+        demo_video_url=os.getenv("DEMO_VIDEO_URL", "").strip(),
+        developer_contact=os.getenv("DEVELOPER_CONTACT", "").strip(),
     )
     # mono відправляє webhook лише на https; http-адреса — майже напевно помилка копіювання.
     if cfg.webhook_base_url and not cfg.webhook_base_url.startswith("https://"):

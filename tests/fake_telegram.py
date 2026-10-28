@@ -137,10 +137,10 @@ class FakeSession(BaseSession):
         return [c for c in self.calls if isinstance(c, method_type)]
 
 
-def make_config(demo_mode: bool = True) -> Config:
+def make_config(demo_mode: bool = True, **extra) -> Config:
     return Config(bot_token="123:TEST", channel_id=-1001, admin_chat_id=ADMIN_CHAT_ID, mono_token="t",
                   support_contact="@support", demo_mode=demo_mode, timezone="Europe/Kyiv",
-                  db_path=":memory:")
+                  db_path=":memory:", **extra)
 
 
 def make_bot() -> tuple[Bot, FakeSession]:

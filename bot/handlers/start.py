@@ -28,6 +28,16 @@ async def cmd_start(message: Message, command: CommandObject, config: Config, pl
         await message.answer(texts.plans_text(visible), reply_markup=plans_keyboard(visible))
 
 
+@router.message(Command("demo"))
+async def cmd_demo(message: Message, config: Config) -> None:
+    """Інструкція для тих, хто тестує демо. Поза демо-режимом команди «немає» —
+    повідомлення піде далі, у fallback (у боті реального клієнта /demo не потрібен)."""
+    if not config.demo_mode:
+        return await unknown(message)
+    await message.answer(texts.demo_text(config.demo_video_url, config.developer_contact),
+                         reply_markup=main_menu)
+
+
 @router.message(Command("help"))
 @router.message(F.text == BTN_HELP)
 async def cmd_help(message: Message, config: Config) -> None:

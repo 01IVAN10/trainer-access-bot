@@ -86,7 +86,8 @@ async def main() -> None:
     try:
         await run_checks(bot, config)
         await db.init(config.db_path)
-        await bot.set_my_commands(COMMANDS)
+        demo_cmd = [BotCommand(command="demo", description="🧪 Як протестувати демо")] if config.demo_mode else []
+        await bot.set_my_commands(demo_cmd + COMMANDS)
         await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=config.admin_chat_id))
         # Посилання на канал із заявками — бот створює його сам (один раз, потім бере з бази).
         access = await ensure_invite_link(bot, config.channel_id)
